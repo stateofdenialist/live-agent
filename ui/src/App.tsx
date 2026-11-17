@@ -1,4 +1,4 @@
-import { useCallback, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { ChatPanel } from './components/ChatPanel';
 import { HistoryPanel } from './components/HistoryPanel';
 import { ProjectStaleBanner } from './components/ProjectStaleBanner';
@@ -16,6 +16,12 @@ import type {
   SessionMeta,
   SettingsPayload,
 } from './types';
+
+/**
+ * Quiet period before a stuck stream counts as ended. The host gives up on a
+ * silent provider after 90s, so this only fires when the socket itself died.
+ */
+const STREAM_WATCHDOG_MS = 150_000;
 
 /** Root application component. Manages tab state and wires WebSocket to chat. */
 export function App() {
@@ -35,6 +41,15 @@ export function App() {
   const [projectStale, setProjectStale] = useState<string | null>(null);
   const [chatState, dispatch] = useReducer(chatReducer, { messages: [], streaming: false });
 
+  // A host restart mid-turn never delivers stream_end, which left the input
+  // disabled until the panel was reopened. Unfreeze once updates stop arriving;
+  // each chunk re-runs the effect and restarts the timer.
+  useEffect(() => {
+    if (!chatState.streaming) return;
+    const timer = setTimeout(() => dispatch({ type: 'STREAM_END' }), STREAM_WATCHDOG_MS);
+    return () => clearTimeout(timer);
+  }, [chatState.streaming, chatState.messages]);
+
   const sendRef = useRef<(msg: ClientMessage) => void>(() => {});
   const expectDiagnosticStreamRef = useRef(false);
 
@@ -49,6 +64,9 @@ export function App() {
     (msg: ServerMessage) => {
       switch (msg.type) {
         case 'ready':
+          // A fresh connection means any in-flight turn is gone (the host that
+          // was streaming it has been replaced). Clear the locked input state.
+          dispatch({ type: 'STREAM_END' });
           sendMsg({ type: 'get_settings' });
           sendMsg({ type: 'get_context' });
           sendMsg({ type: 'get_sessions' });
