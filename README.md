@@ -42,7 +42,7 @@ Live Agent opens a chat panel inside Live via the [Ableton Extensions SDK](https
 
 API keys are stored locally in Live's extension storage and never leave your machine. Local models run with a 32k context and a 30-minute keep-alive — set `LIVE_AGENT_NUM_CTX` to override the context size. The **Freebuff API** provider talks to `freebuff.com/api/v1/paid` with a Developer API key from [freebuff.com/account/api](https://freebuff.com/account/api) (a session token cannot drive an external client); catalog models that cannot stream are requested as one JSON reply and replayed, so they behave like the streaming ones. The `npm start` model picker is a developer-mode feature; in a packaged `.ablx` install, pick the provider and model in the panel's bottom bar and the choice is remembered.
 
-**The panel can live in your browser.** The Extensions SDK only exposes a _modal_ dialog, so while the panel is open Live's transport and other controls are blocked. The **external-link button** in the bottom bar opens the same UI in your default browser, where you can play the track, tweak devices and browse while the agent works. The host listens on a fixed port (`LIVE_AGENT_PORT`, default `47100`) so a popped-out tab survives restarts.
+**The panel can live in your browser.** The Extensions SDK only exposes a _modal_ dialog, so while the panel is open Live's transport and other controls are blocked. The **external-link button** in the bottom bar opens the same UI in your default browser, where you can play the track, tweak devices and browse while the agent works. The host listens on a fixed port (`LIVE_AGENT_PORT`, default `47100`) so a popped-out tab survives restarts: the tab reconnects by itself, and a turn cut off mid-stream no longer leaves the input disabled (reconnecting clears it, and a stream that goes silent for 150s is ended).
 
 **Conversations persist, and prompts stay lean.** Closing the panel or restarting Live resumes the most recent saved conversation instead of starting empty. Token use is bounded on three sides: `get_live_state` returns a compact snapshot (`detail: "full"` returns every device parameter and note), oversized tool results are capped before they reach the model, and provider history is trimmed to a character budget by stubbing older tool results. That keeps multi-round turns inside providers' per-minute token limits.
 
@@ -120,6 +120,8 @@ npm run generate   # regenerate tool schemas from SDK types
 npm test           # run tests
 ```
 
+The watch runner also watches the host's own output. Live can wedge its extension bridge: the host stays alive while Live logs `Failed to process receive queue` and drops the extension from the menus. A burst of those lines makes the runner restart the host itself. If a freshly started host is rejected the same way, restarting cannot help, so it stops and asks you to switch **Developer Mode** off and on in Live → Preferences → Extensions, then save any file.
+
 ### How tool generation works
 
 `scripts/generate-tools.ts` reads the SDK's TypeScript type definitions using `ts-morph` and writes two files:
@@ -135,7 +137,7 @@ Run `npm run generate` after updating the SDK to pick up any new API surface aut
 scripts/
 ├── generate-tools.ts       # SDK type parser → tool schema + executor generator
 ├── choose-model.ts         # `npm start` prompt — pick a local model, write it for activation
-└── dev.ts                  # Watch runner — rebuild + restart the Extension Host on save
+└── dev.ts                  # Watch runner — rebuild + restart the Extension Host on save, recover a wedged bridge
 
 src/
 ├── extension.ts            # Entry point — registers context menu, starts server, opens webview
@@ -144,6 +146,8 @@ src/
 ├── storage.ts              # Persistent key + settings storage
 ├── history-prune.ts        # Provider history trimming — count limit + character budget
 ├── open-external.ts        # Opens a URL in the default browser (pop-out button)
+├── scripts/
+│   └── host-health.ts      # Detects Live's wedged bridge from host output (dev runner)
 ├── providers/
 │   ├── index.ts            # ProviderAdapter interface, provider/model registry, factory
 │   └── http-stream.ts      # Streaming over node:https — OpenAI, Anthropic, Gemini, native Ollama

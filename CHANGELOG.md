@@ -11,6 +11,7 @@ Versioning follows [Semantic Versioning](https://semver.org).
 
 ### Fixed
 
+- **Input locked after a lost stream** — a turn interrupted mid-stream (host restart, closed socket) never delivered `stream_end`, so the chat input stayed disabled until the page was reloaded, and reconnecting did not clear it because the resumed history kept the stale streaming flag. A fresh connection now clears it, and a stream silent for 150s is ended by a watchdog
 - **Conversation survives reopening the panel** — connecting used to wipe the live history, so closing the modal dialog (the only way to reach Live's transport) discarded the chat; the most recent session is also resumed from disk when the extension host restarts
 - **Silent provider hangs** — a request that opens and then sends nothing now fails after 90s (`LIVE_AGENT_IDLE_TIMEOUT_MS` to override) instead of hanging the turn forever
 - **Leaked response sockets** — the connection closes when a turn stops reading at `[DONE]`, so a gateway cannot keep counting a finished request as active
@@ -22,6 +23,7 @@ Versioning follows [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **Dev runner recovers a wedged host** — Live can stop processing the host's messages while the host stays alive, silently removing the extension from the menus. Host output is now scanned for a burst of `Failed to process receive queue`, which restarts the host; if a fresh host is rejected the same way, the runner reports that Developer Mode has to be toggled instead of restarting in a loop
 - **Freebuff API provider** — `freebuff.com/api/v1/paid` (OpenAI-compatible) alongside the existing providers: `deepseek-v4.1-flash` streams with tool calls, and the eight other tool-capable catalog models are requested as a single JSON reply and replayed as a stream; Developer API key in Settings
 - **Local Ollama provider** — `gpt-oss:20b` via Ollama's native `/api/chat` API (the OpenAI-compatible endpoint ignores `num_ctx`, which truncated the tool schemas), no API key required; server URL configurable in Settings (defaults to `http://localhost:11434`)
 - **Startup model picker** — `npm start` lists the models Ollama has pulled and applies the pick on activation (override with `LIVE_AGENT_MODEL`); the file is consumed once, so later launches keep the choice made in the panel
