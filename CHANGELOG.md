@@ -11,13 +11,15 @@ Versioning follows [Semantic Versioning](https://semver.org).
 
 ### Fixed
 
+- **Startup model picker** — the written choice is also looked up in the working directory, so it applies when the host is started from outside the repo root; a packaged `.ablx` install picks its provider in the panel instead
 - **Auto mode** — skips multi-step continue checkpoints (Review/Guard still pause every 5 steps)
 - **Continue checkpoint UI** — accept removes the prompt entirely; decline keeps the message with a stop icon (no duplicate streamed text)
 - **`web_search`** — DuckDuckGo Lite for tab-site links (Ultimate Guitar, Songsterr, BigBassTabs, etc.) + ASCII tab excerpts from fetchable pages; Wikipedia kept for song overview
 
 ### Added
 
-- **Local Ollama provider** — `gpt-oss:20b` via Ollama's OpenAI-compatible API, no API key required; server URL configurable in Settings (defaults to `http://localhost:11434/v1`)
+- **Local Ollama provider** — `gpt-oss:20b` via Ollama's native `/api/chat` API (the OpenAI-compatible endpoint ignores `num_ctx`, which truncated the tool schemas), no API key required; server URL configurable in Settings (defaults to `http://localhost:11434`)
+- **Startup model picker** — `npm start` lists the models Ollama has pulled and applies the pick on activation (override with `LIVE_AGENT_MODEL`); the file is consumed once, so later launches keep the choice made in the panel
 - **`web_search` tool** — Wikipedia + DuckDuckGo lookup for tempo, bass lines, and other musical reference (no API key)
 - **Production & Live learning via `web_search`** — Ableton.com article excerpts, `site:ableton.com` query variants for built-in devices, and system-prompt guidance for mixing/sound-design/Live workflow questions (Wikipedia skipped for production queries)
 - **`resources_import_into_project` tool** — copies an audio file from disk into the Live project (SDK `Resources.importIntoProject`)
@@ -25,7 +27,7 @@ Versioning follows [Semantic Versioning](https://semver.org).
 ### Changed
 
 - **Tool descriptions** — the generator no longer emits empty descriptions (`??` kept blank JSDoc); it now uses SDK JSDoc, then `@param` docs, then a humanised parameter name, with overrides for tools whose JSDoc described the result rather than the action
-- **Dev runner** — `npm start` now watches `src/`, `ui/src/` and `scripts/`, rebuilding and restarting the Extension Host on save; stale hosts are cleaned up cross-platform, replacing the `pkill` `prestart` that only worked on macOS/Linux
+- **Dev runner** — `npm start` now watches `src/`, `ui/src/` and `scripts/`, rebuilding and restarting the Extension Host on save; a host left by an interrupted run is stopped through its pid file, replacing the `pkill` `prestart` that only worked on macOS/Linux and never touching another project's host
 - **Tool error recovery** — SDK tool failures return `{ ok: false, error }` to the LLM instead of aborting the agent loop, so the agent can refresh state and retry (e.g. stale track ids after a partial delete)
 - **Live snapshot on layout changes** — track create/delete results (and stale-id failures) include a compact `liveSnapshot` with current track ids so the model does not reuse ids from the opening system prompt
 - **Agent continue checkpoints** — pauses every 5 steps (counted across follow-up messages in the same Live session) with Continue/Stop buttons; hard cap 50 steps per user message

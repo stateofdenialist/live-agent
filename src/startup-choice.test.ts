@@ -31,7 +31,7 @@ describe('applyStartupChoice', () => {
     fs.writeFileSync(configPath, JSON.stringify({ provider: 'ollama', model: 'gemma4:12b' }));
     const target = recorder();
 
-    expect(applyStartupChoice(configPath, target)).toEqual({
+    expect(applyStartupChoice([configPath], target)).toEqual({
       provider: 'ollama',
       model: 'gemma4:12b',
     });
@@ -41,7 +41,7 @@ describe('applyStartupChoice', () => {
 
   it('does nothing when no config file exists', () => {
     const target = recorder();
-    expect(applyStartupChoice(path.join(tempDir(), 'live-agent.config.json'), target)).toBeNull();
+    expect(applyStartupChoice([path.join(tempDir(), 'live-agent.config.json')], target)).toBeNull();
     expect(target.calls).toEqual([]);
   });
 
@@ -50,7 +50,7 @@ describe('applyStartupChoice', () => {
     fs.writeFileSync(configPath, JSON.stringify({ model: 'llama3.1:8b' }));
     const target = recorder();
 
-    expect(applyStartupChoice(configPath, target)).toBeNull();
+    expect(applyStartupChoice([configPath], target)).toBeNull();
     expect(target.calls).toEqual([]);
     expect(fs.existsSync(configPath)).toBe(false);
   });
@@ -60,8 +60,38 @@ describe('applyStartupChoice', () => {
     fs.writeFileSync(configPath, '{not json');
     const target = recorder();
 
-    expect(applyStartupChoice(configPath, target)).toBeNull();
+    expect(applyStartupChoice([configPath], target)).toBeNull();
     expect(target.calls).toEqual([]);
     expect(fs.existsSync(configPath)).toBe(false);
+  });
+
+  it('falls through to the next path when the first is missing', () => {
+    const dir = tempDir();
+    const missing = path.join(dir, 'repo', 'live-agent.config.json');
+    const present = path.join(dir, 'live-agent.config.json');
+    fs.writeFileSync(present, JSON.stringify({ provider: 'ollama', model: 'gemma4:12b' }));
+    const target = recorder();
+
+    expect(applyStartupChoice([missing, present], target)).toEqual({
+      provider: 'ollama',
+      model: 'gemma4:12b',
+    });
+    expect(fs.existsSync(present)).toBe(false);
+  });
+
+  it('uses the first path when both exist', () => {
+    const dir = tempDir();
+    const first = path.join(dir, 'a.json');
+    const second = path.join(dir, 'b.json');
+    fs.writeFileSync(first, JSON.stringify({ provider: 'openai', model: 'gpt-5.4-mini' }));
+    fs.writeFileSync(second, JSON.stringify({ provider: 'ollama', model: 'gpt-oss:20b' }));
+    const target = recorder();
+
+    expect(applyStartupChoice([first, second], target)).toEqual({
+      provider: 'openai',
+      model: 'gpt-5.4-mini',
+    });
+    expect(fs.existsSync(first)).toBe(false);
+    expect(fs.existsSync(second)).toBe(true);
   });
 });

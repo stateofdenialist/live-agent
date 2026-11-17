@@ -16,5 +16,8 @@ sessions/
 # One-shot model choice written by `npm start`
 live-agent.config.json
 
+# PID of this project's extension host, used by the dev runner to clean up
+.live-agent-host.pid
+
 # Packaged extension archives
 *.ablx

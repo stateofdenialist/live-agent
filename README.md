@@ -39,7 +39,7 @@ Live Agent opens a chat panel inside Live via the [Ableton Extensions SDK](https
 | Google         | Gemini 3.5 Flash, Gemini 3.1 Pro (preview), Gemini 3.1 Flash-Lite                     |
 | Ollama (local) | gpt-oss:20b, gemma4:12b, gemma4:26b, llama3.1:8b — no API key; server URL in Settings |
 
-API keys are stored locally in Live's extension storage and never leave your machine. Local models run with a 32k context and a 30-minute keep-alive — set `LIVE_AGENT_NUM_CTX` to override the context size.
+API keys are stored locally in Live's extension storage and never leave your machine. Local models run with a 32k context and a 30-minute keep-alive — set `LIVE_AGENT_NUM_CTX` to override the context size. The `npm start` model picker is a developer-mode feature; in a packaged `.ablx` install, pick the provider and model in the panel's bottom bar and the choice is remembered.
 
 ---
 

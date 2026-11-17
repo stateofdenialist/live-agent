@@ -31,6 +31,15 @@ function projectRoot(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 }
 
+/**
+ * Where a pending startup choice may live. `npm start` writes it to the project
+ * root; the working directory covers hosts launched from elsewhere.
+ */
+function startupChoicePaths(): string[] {
+  const dirs = [projectRoot(), process.cwd()];
+  return [...new Set(dirs.map((dir) => path.join(dir, STARTUP_CHOICE_FILENAME)))];
+}
+
 export const activate = (activation: ActivationContext): void => {
   const context = initialize(activation, '1.0.0');
   const modalGuard = createModalGuard();
@@ -45,10 +54,7 @@ export const activate = (activation: ActivationContext): void => {
 
     // A model picked by `npm start` wins for this launch; the file is then removed
     // so later launches use whatever was last chosen in the panel.
-    const startupChoice = applyStartupChoice(
-      path.join(projectRoot(), STARTUP_CHOICE_FILENAME),
-      storage,
-    );
+    const startupChoice = applyStartupChoice(startupChoicePaths(), storage);
     if (startupChoice) {
       console.log(
         `[Live Agent] Startup model choice: ${startupChoice.provider} / ${startupChoice.model}`,

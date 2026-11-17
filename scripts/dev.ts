@@ -3,8 +3,8 @@
  *
  * Builds once, launches Live's Extension Host, then rebuilds and restarts the
  * host on every save so changes reach Live without manual restarts. It also
- * clears out hosts left by a previous session — the old `prestart` used `pkill`,
- * which only exists on macOS/Linux.
+ * stops a host left behind by an interrupted session, tracked in a pid file, so
+ * it never touches another project's extension host.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
@@ -14,7 +14,8 @@ import { fileURLToPath } from 'node:url';
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WATCH_DIRS = ['src', 'ui/src', 'scripts'];
 const DEBOUNCE_MS = 400;
-const HOST_MARKER = 'ExtensionHostNodeModule';
+const HOST_COMMAND = 'extensions-cli';
+const HOST_PID_FILE = path.join(PROJECT_ROOT, '.live-agent-host.pid');
 const isWindows = process.platform === 'win32';
 
 let host: ChildProcess | null = null;
@@ -34,17 +35,59 @@ function killTree(pid: number): void {
   }
 }
 
-/** Terminates Extension Hosts left over from a previous session. */
-function killStaleHosts(): void {
-  if (isWindows) {
-    const script =
-      'Get-CimInstance Win32_Process -Filter "name=\'node.exe\'" | ' +
-      `Where-Object { $_.CommandLine -like '*${HOST_MARKER}*' } | ` +
-      'ForEach-Object { Stop-Process -Id $_.ProcessId -Force }';
-    spawnSync('powershell', ['-NoProfile', '-Command', script], { stdio: 'ignore' });
+/** Records the host PID so a later run can stop a host left by a crash. */
+function recordHostPid(child: ChildProcess): void {
+  if (!child.pid) return;
+  try {
+    fs.writeFileSync(HOST_PID_FILE, String(child.pid));
+  } catch {
+    /* Without the file a crashed run just leaves its host behind. */
+  }
+}
+
+/** Removes the pid file once its host is gone or replaced. */
+function clearHostPid(): void {
+  try {
+    fs.rmSync(HOST_PID_FILE, { force: true });
+  } catch {
+    /* best effort */
+  }
+}
+
+/**
+ * Whether `pid` is alive and still looks like an extension host. A recorded PID
+ * can be reused by an unrelated process, so the command line is checked first.
+ */
+function isExtensionHost(pid: number): boolean {
+  const result = isWindows
+    ? spawnSync(
+        'powershell',
+        [
+          '-NoProfile',
+          '-Command',
+          `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`,
+        ],
+        { encoding: 'utf8' },
+      )
+    : spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' });
+  return result.status === 0 && (result.stdout ?? '').includes(HOST_COMMAND);
+}
+
+/** Stops the host left behind by this project's previous session, if any. */
+function killStaleHost(): void {
+  let recorded = '';
+  try {
+    recorded = fs.readFileSync(HOST_PID_FILE, 'utf8').trim();
+  } catch {
     return;
   }
-  spawnSync('pkill', ['-f', HOST_MARKER], { stdio: 'ignore' });
+
+  const pid = Number.parseInt(recorded, 10);
+  if (Number.isInteger(pid) && pid > 0 && isExtensionHost(pid)) {
+    killTree(pid);
+    console.log(`[dev] stopped stale extension host (pid ${pid})`);
+  }
+  clearHostPid();
 }
 
 /** Runs build.ts (esbuild bundle + Vite UI). */
@@ -67,12 +110,14 @@ function startHost(): void {
     detached: !isWindows,
   });
   host = child;
+  recordHostPid(child);
   console.log(`[dev] extension host started (pid ${child.pid ?? '?'})`);
 
   child.on('exit', (code) => {
     // A host we replaced is no longer `host`; only report genuine exits.
     if (host !== child) return;
     host = null;
+    clearHostPid();
     console.log(
       `[dev] extension host exited (code ${code ?? 'null'}) — will restart on the next change.`,
     );
@@ -123,6 +168,7 @@ function watchSources(): void {
 function shutdown(): void {
   if (debounce) clearTimeout(debounce);
   stopHost();
+  clearHostPid();
   process.exit(0);
 }
 
@@ -134,7 +180,7 @@ if (!build()) {
   process.exit(1);
 }
 
-killStaleHosts();
+killStaleHost();
 startHost();
 watchSources();
 

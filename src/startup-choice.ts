@@ -16,13 +16,16 @@ export interface LastChoiceTarget {
 /**
  * Applies a one-shot provider/model choice written before startup, then deletes
  * the file so later launches fall back to the in-app last choice.
+ * `configPaths` is searched in order and the first existing file wins, because
+ * the extension is started from a different directory in dev and in Live.
  * Returns the applied choice, or null when there is nothing valid to apply.
  */
 export function applyStartupChoice(
-  configPath: string,
+  configPaths: string[],
   target: LastChoiceTarget,
 ): StartupChoice | null {
-  if (!fs.existsSync(configPath)) {
+  const configPath = configPaths.find((candidate) => fs.existsSync(candidate));
+  if (!configPath) {
     return null;
   }
 
