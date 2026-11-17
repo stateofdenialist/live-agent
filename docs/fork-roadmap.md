@@ -161,6 +161,26 @@ files), a changelog gate in CI, and tagged `.ablx` releases.
 **Why:** the fork is already several commits ahead; divergence costs compound
 quietly.
 
+### 15. Mid-turn kill switch in the panel — S–M
+
+Today the agent can only be stopped at a checkpoint (every 5 rounds, via **Stop**)
+or by refusing a confirmation. There is no way to abort a turn that is
+mid-stream or looping through tool calls.
+
+**Why:** playing with a local model means watching it go wrong — an immediate
+abort is the difference between experimenting and babysitting. Pairs with item 4:
+cancelling mid-tool cannot undo an edit already applied, so revert and cancel
+belong together.
+
+**Constraints:** the streams in `providers/http-stream.ts` take no abort signal,
+so cancellation needs plumbing from the panel's `{ type: 'cancel' }` message
+through an `AbortController` into the request and into the loop's between-round
+and between-tool checks. A button inside the panel cannot restart or stop the
+host itself — that stays the dev runner's job.
+
+**First step:** add the abort signal to `streamLines` and a loop check, then the
+button last.
+
 ---
 
 ## Not on this list
