@@ -48,10 +48,7 @@ API keys are stored locally in Live's extension storage and never leave your mac
 **To run:**
 
 - **Ableton Live 12** version **12.4.5 beta** or later (Extensions require Live Suite)
-- An API key from at least one supported provider:
-  - [Google AI Studio](https://aistudio.google.com) — free tier, no credit card required
-  - [OpenAI](https://platform.openai.com) — pay-as-you-go
-  - [Anthropic](https://console.anthropic.com) — pay-as-you-go
+- Either a cloud API key — [Google AI Studio](https://aistudio.google.com) (free tier, no credit card), [OpenAI](https://platform.openai.com), [Anthropic](https://console.anthropic.com) — or a local model via [Ollama](https://ollama.com), which needs no key
 
 **To build from source:**
 
@@ -91,12 +88,27 @@ npm run build
 - Click the **gear icon** in the bottom bar → paste your API key
 - Click the **chat icon** to return and start talking
 
+### 5. Optional — run a local model with Ollama
+
+No API key needed; the model runs on your machine.
+
+```bash
+ollama pull gpt-oss:20b   # 13 GB — the default local model
+ollama serve              # skip if the Ollama app is already running
+npm start                 # the picker lists the models you have pulled
+```
+
+Use a non-default endpoint (another machine, a different port) in the panel's **Settings → Ollama server** field.
+
+The picker only offers the four tags registered in `PROVIDERS.ollama.models` (`src/providers/index.ts`) **and** only those you have actually pulled. To use a different tag, add it to that registry — the panel reads the list from the extension, so there is nothing to change in `ui/`. `LIVE_AGENT_MODEL=gpt-oss:20b npm start` skips the prompt entirely.
+
 ---
 
 ## Development
 
 ```bash
 npm start          # watch mode — recompiles on save, Live hot-reloads
+LIVE_AGENT_MODEL=gpt-oss:20b npm start  # same, but skip the model prompt
 npm run typecheck  # type-check only
 npm run generate   # regenerate tool schemas from SDK types
 npm test           # run tests
@@ -115,15 +127,18 @@ Run `npm run generate` after updating the SDK to pick up any new API surface aut
 
 ```
 scripts/
-└── generate-tools.ts       # SDK type parser → tool schema + executor generator
+├── generate-tools.ts       # SDK type parser → tool schema + executor generator
+├── choose-model.ts         # `npm start` prompt — pick a local model, write it for activation
+└── dev.ts                  # Watch runner — rebuild + restart the Extension Host on save
 
 src/
 ├── extension.ts            # Entry point — registers context menu, starts server, opens webview
+├── startup-choice.ts       # Applies the one-shot model choice written by `npm start`
 ├── server.ts               # Local HTTP + WebSocket server, agentic loop, confirmation flow
 ├── storage.ts              # Persistent key + settings storage
 ├── providers/
-│   ├── index.ts            # ProviderAdapter interface, model list, factory
-│   └── http-stream.ts      # Streaming over node:https — no provider SDK dependencies
+│   ├── index.ts            # ProviderAdapter interface, provider/model registry, factory
+│   └── http-stream.ts      # Streaming over node:https — OpenAI, Anthropic, Gemini, native Ollama
 ├── agent/
 │   ├── chat.ts             # System prompt builder + LiveState types
 │   ├── safety.ts           # DESTRUCTIVE_TOOLS set for confirmation mode
@@ -151,7 +166,7 @@ Full issue tracking is on [GitHub](https://github.com/nonogv/live-agent/issues) 
 Polished, stable experience for developer-musicians who build from source and bring their own API key. Manual QA across all three providers is the remaining gate.
 
 **v2 — Power features**  
-Consumer packaged installer · producer rules (persistent agent instructions) · `@track` / `@clip` / `@device` context targeting · local model support (Ollama) · RAG over the Ableton Live manual (scraped, BM25-indexed, auto-refreshed by CI) · SDK auto-sync on new Ableton releases.
+Consumer packaged installer · producer rules (persistent agent instructions) · `@track` / `@clip` / `@device` context targeting · RAG over the Ableton Live manual (scraped, BM25-indexed, auto-refreshed by CI) · SDK auto-sync on new Ableton releases.
 
 **v3 — Platform**  
 Cloud conversation sync · collaborative sessions for remote co-production.
