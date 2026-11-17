@@ -120,7 +120,7 @@ npm run generate   # regenerate tool schemas from SDK types
 npm test           # run tests
 ```
 
-The watch runner also watches the host's own output. Live can wedge its extension bridge: the host stays alive while Live logs `Failed to process receive queue` and drops the extension from the menus. A burst of those lines makes the runner restart the host itself. If a freshly started host is rejected the same way, restarting cannot help, so it stops and asks you to switch **Developer Mode** off and on in Live → Preferences → Extensions, then save any file.
+Two guards keep the runner from fighting itself: a rebuild needs the file's modification time to have actually changed (Windows' recursive watcher reports untouched files, and a bare directory event is ignored outright), and host restarts are spaced at least 5s apart with extra saves coalesced into one. The watch runner also watches the host's own output. Live can wedge its extension bridge: the host stays alive while Live logs `Failed to process receive queue` and drops the extension from the menus. A burst of those lines makes the runner restart the host itself. If a freshly started host is rejected the same way, restarting cannot help, so it stops and asks you to switch **Developer Mode** off and on in Live → Preferences → Extensions, then save any file.
 
 ### How tool generation works
 

@@ -25,12 +25,91 @@ const MAX_AUTO_RECOVERIES = 2;
 const HEALTHY_HOST_MS = 60_000;
 /** How long to stop trying after concluding that Live itself is wedged. */
 const GIVE_UP_MS = 60_000;
+/** No two host restarts closer together than this — Live's bridge chokes on churn. */
+const MIN_RESTART_SPACING_MS = 5_000;
 
 let host: ChildProcess | null = null;
 let debounce: NodeJS.Timeout | null = null;
 let hostStartedAt = 0;
 let autoRecoveries = 0;
 let recoveryPausedUntil = 0;
+let lastRestartAt = 0;
+let pendingRestart: NodeJS.Timeout | null = null;
+/** Modification times captured from the last build, to tell edits from noise. */
+const mtimes = new Map<string, number>();
+
+/**
+ * Records a file's modification time and reports whether it actually changed.
+ *
+ * Windows' recursive watcher reports files nobody touched — directory changes,
+ * attribute updates, re-enumeration after a crash — and every one of those used
+ * to cost a rebuild and a host restart. That churn is what wedges Live's
+ * bridge, so a change now has to show up in the file's mtime to count.
+ */
+function takeChange(absolute: string): boolean {
+  let mtimeMs: number;
+  try {
+    const stat = fs.statSync(absolute);
+    if (stat.isDirectory()) return false;
+    mtimeMs = stat.mtimeMs;
+  } catch {
+    // Deleted since the event: a real change only if the file was known.
+    return mtimes.delete(absolute);
+  }
+
+  const previous = mtimes.get(absolute);
+  mtimes.set(absolute, mtimeMs);
+  return previous !== mtimeMs;
+}
+
+/** Seeds the mtime map so untouched files are ignored from the first event. */
+function seedMtimes(): void {
+  const record = (absolute: string): void => {
+    try {
+      const stat = fs.statSync(absolute);
+      if (!stat.isDirectory()) mtimes.set(absolute, stat.mtimeMs);
+    } catch {
+      /* vanished between listing and stat */
+    }
+  };
+
+  const walk = (absolute: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(absolute, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const child = path.join(absolute, entry.name);
+      if (entry.isDirectory()) walk(child);
+      else record(child);
+    }
+  };
+
+  for (const dir of WATCH_DIRS) walk(path.join(PROJECT_ROOT, dir));
+  record(path.join(PROJECT_ROOT, 'manifest.json'));
+}
+
+/** Restarts the host, spacing restarts apart so it cannot thrash Live. */
+function restartHost(): void {
+  const wait = lastRestartAt + MIN_RESTART_SPACING_MS - Date.now();
+  if (wait > 0) {
+    // Coalesce: one pending restart is enough however many saves arrive.
+    if (pendingRestart) return;
+    console.log(`[dev] host restarted moments ago — waiting ${Math.ceil(wait / 1000)}s`);
+    pendingRestart = setTimeout(() => {
+      pendingRestart = null;
+      restartHost();
+    }, wait);
+    return;
+  }
+
+  console.log('[dev] restarting extension host');
+  stopHost();
+  lastRestartAt = Date.now();
+  startHost();
+}
 
 /**
  * Forwards a child stream to ours while scanning it line by line.
@@ -84,6 +163,7 @@ function handleWedge(): void {
     `\n[dev] Live stopped processing host messages — restarting the extension host ` +
       `(attempt ${autoRecoveries}/${MAX_AUTO_RECOVERIES})`,
   );
+  lastRestartAt = Date.now();
   stopHost();
   startHost();
 }
@@ -217,9 +297,7 @@ function rebuildAndRestart(reason: string): void {
     return;
   }
 
-  console.log('[dev] restarting extension host');
-  stopHost();
-  startHost();
+  restartHost();
 }
 
 function watchSources(): void {
@@ -234,16 +312,22 @@ function watchSources(): void {
     fs.watch(absolute, { recursive: true }, (_event, filename) => {
       const file = String(filename ?? '');
       if (!file || file.endsWith('.test.ts')) return;
+      if (!takeChange(path.join(absolute, file))) return;
       onChange(path.join(dir, file));
     });
   }
 
   const manifest = path.join(PROJECT_ROOT, 'manifest.json');
-  if (fs.existsSync(manifest)) fs.watch(manifest, () => onChange('manifest.json'));
+  if (fs.existsSync(manifest)) {
+    fs.watch(manifest, () => {
+      if (takeChange(manifest)) onChange('manifest.json');
+    });
+  }
 }
 
 function shutdown(): void {
   if (debounce) clearTimeout(debounce);
+  if (pendingRestart) clearTimeout(pendingRestart);
   stopHost();
   clearHostPid();
   process.exit(0);
@@ -251,6 +335,10 @@ function shutdown(): void {
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+// A closed terminal (or a dead pipe to `tee`) raises EPIPE on write and would
+// take the runner down silently, leaving its host running and unmanaged.
+process.stdout.on('error', () => {});
+process.stderr.on('error', () => {});
 
 if (!build()) {
   console.error('[dev] initial build failed — not starting the extension host.');
@@ -259,6 +347,7 @@ if (!build()) {
 
 killStaleHost();
 startHost();
+seedMtimes();
 watchSources();
 
 console.log(
