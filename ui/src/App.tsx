@@ -42,7 +42,7 @@ export function App() {
     sendRef.current({ type: 'set_active_choice', provider: nextProvider, model: nextModel });
   }, []);
 
-  const { providers, provider, model, models, setProvider, setModel, initFromLastChoice } =
+  const { providers, provider, model, models, setProvider, setModel, applySettings } =
     useProviders(handleChoiceChange);
 
   const handleMessage = useCallback(
@@ -87,7 +87,7 @@ export function App() {
           break;
         case 'settings':
           setSettings(msg);
-          initFromLastChoice(msg.lastProvider, msg.lastModel);
+          applySettings(msg);
           break;
         case 'settings_saved':
           break;
@@ -129,13 +129,16 @@ export function App() {
           break;
       }
     },
-    [debugMode, initFromLastChoice],
+    [debugMode, applySettings],
   );
 
   const { send: sendMsg } = useWebSocket(handleMessage);
   sendRef.current = sendMsg;
 
   function handleSend(text: string) {
+    // The provider registry arrives with the settings frame right after `ready`;
+    // without it there is no valid provider/model to send.
+    if (!provider || !model) return;
     dispatch({ type: 'ADD_USER', text });
     sendMsg({ type: 'chat', text, provider, model });
   }

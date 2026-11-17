@@ -75,6 +75,8 @@ export interface ContextState {
 /** Settings payload received from the backend. */
 export interface SettingsPayload {
   type: 'settings';
+  /** Provider/model registry owned by the extension host. */
+  providers?: ProvidersRegistry;
   /** Map of provider → masked key string (truthy = set). */
   keys: Record<string, string | null>;
   lastProvider?: string;

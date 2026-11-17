@@ -20,7 +20,12 @@ import {
 import { executeToolWithRecovery } from './agent/tool-execution.js';
 import { GENERATED_TOOL_SCHEMAS } from './agent/generated-tools.js';
 import { CUSTOM_TOOL_SCHEMAS } from './agent/tools.js';
-import { createProvider, providerRequiresKey, type ProviderMessage } from './providers/index.js';
+import {
+  createProvider,
+  providerRequiresKey,
+  PROVIDERS,
+  type ProviderMessage,
+} from './providers/index.js';
 import { DESTRUCTIVE_TOOLS } from './agent/safety.js';
 import { pruneHistoryForProvider } from './history-prune.js';
 import { stringifyJson, toJsonSafe } from './json.js';
@@ -299,6 +304,8 @@ async function handleMessage(
       ws.send(
         JSON.stringify({
           type: 'settings',
+          // Single source of truth for provider/model lists; the UI renders this.
+          providers: PROVIDERS,
           keys: storage.getMaskedKeys(),
           lastProvider: storage.getLastProvider(),
           lastModel: storage.getLastModel(),

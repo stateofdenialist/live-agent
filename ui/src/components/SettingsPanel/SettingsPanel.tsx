@@ -22,8 +22,6 @@ const KEY_PLACEHOLDERS: Record<string, string> = {
   gemini: 'AIza…',
 };
 
-const PROVIDER_ORDER = ['openai', 'anthropic', 'gemini', 'ollama'];
-
 const TEXTAREA_CLASS =
   'w-full resize-none rounded-default border border-border bg-surface2 px-2.5 py-2 text-[13px] text-text outline-none focus:outline focus:outline-1 focus:outline-accent';
 
@@ -40,6 +38,8 @@ export function SettingsPanel({
   onSaveMemories,
 }: SettingsPanelProps) {
   const [feedback, setFeedback] = useState('');
+  // Key fields follow the registry order sent by the extension host.
+  const providerIds = Object.keys(providers);
   const [globalInstructions, setGlobalInstructions] = useState(context.globalInstructions);
   const [projectInstructions, setProjectInstructions] = useState(context.projectInstructions);
   const [globalMemories, setGlobalMemories] = useState(context.globalMemories);
@@ -69,7 +69,7 @@ export function SettingsPanel({
 
   function handleSave() {
     const keys: Record<string, string> = {};
-    for (const id of PROVIDER_ORDER) {
+    for (const id of providerIds) {
       // Keyless local providers (Ollama) have no key input.
       if (providers[id]?.requiresKey === false) continue;
       keys[id] = getKeyInputValue(id);
@@ -141,7 +141,7 @@ export function SettingsPanel({
           </a>
           . Local models need no key — point the Ollama server field at your endpoint.
         </p>
-        {PROVIDER_ORDER.map((id) => {
+        {providerIds.map((id) => {
           const entry = providers[id];
           if (entry?.requiresKey === false) {
             return (
