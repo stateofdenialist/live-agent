@@ -1,7 +1,10 @@
 import { initialize, type ActivationContext } from '@ableton-extensions/sdk';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Storage } from './storage.js';
 import { startServer, type LiveAgentServer } from './server.js';
 import { createModalGuard } from './modal-guard.js';
+import { applyStartupChoice, STARTUP_CHOICE_FILENAME } from './startup-choice.js';
 
 /**
  * Modal dialog dimensions (width × height in pixels).
@@ -23,6 +26,11 @@ const CONTEXT_MENU_SCOPES = [
 /** Tracks scopes registered in this JS realm to avoid duplicate registration attempts. */
 const registeredMenuScopes = new Set<string>();
 
+/** Project root — `dist/` sits one level below it once built. */
+function projectRoot(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+}
+
 export const activate = (activation: ActivationContext): void => {
   const context = initialize(activation, '1.0.0');
   const modalGuard = createModalGuard();
@@ -34,6 +42,18 @@ export const activate = (activation: ActivationContext): void => {
   const serverReady: Promise<void> = (async () => {
     const storageDir = context.environment.storageDirectory ?? '.';
     const storage = new Storage(storageDir);
+
+    // A model picked by `npm start` wins for this launch; the file is then removed
+    // so later launches use whatever was last chosen in the panel.
+    const startupChoice = applyStartupChoice(
+      path.join(projectRoot(), STARTUP_CHOICE_FILENAME),
+      storage,
+    );
+    if (startupChoice) {
+      console.log(
+        `[Live Agent] Startup model choice: ${startupChoice.provider} / ${startupChoice.model}`,
+      );
+    }
 
     server = await startServer(() => context.application.song, storage, context.resources);
 

@@ -43,6 +43,8 @@ export interface ProviderEntry {
   models: ModelEntry[];
   /** Cheapest/free default model for this provider. */
   default: string;
+  /** False for local providers that need no API key (e.g. Ollama). */
+  requiresKey?: boolean;
 }
 
 /** The full provider/model registry. */
@@ -77,6 +79,8 @@ export interface SettingsPayload {
   keys: Record<string, string | null>;
   lastProvider?: string;
   lastModel?: string;
+  /** Configured base URL for a local Ollama server. */
+  ollamaBaseUrl?: string;
 }
 
 // ── WebSocket message types (server → client) ──────────────────────────────
@@ -115,7 +119,7 @@ export type ClientMessage =
   | { type: 'chat'; text: string; provider: string; model: string }
   | { type: 'clear_history' }
   | { type: 'get_settings' }
-  | { type: 'save_settings'; keys: Record<string, string> }
+  | { type: 'save_settings'; keys: Record<string, string>; ollamaBaseUrl?: string }
   | { type: 'set_active_choice'; provider: string; model: string }
   | { type: 'clear_key'; provider: string }
   | { type: 'open_url'; url: string }

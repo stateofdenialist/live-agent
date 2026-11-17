@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { ProviderMessage } from './providers/index.js';
+import { DEFAULT_OLLAMA_BASE_URL, type ProviderMessage } from './providers/index.js';
 import type { PromptContext } from './agent/chat.js';
 
 /** Persisted metadata for the active Ableton Live set. */
@@ -33,7 +33,10 @@ interface Settings {
     openai?: string;
     anthropic?: string;
     gemini?: string;
+    ollama?: string;
   };
+  /** Base URL of a local Ollama server; unset means the localhost default. */
+  ollamaBaseUrl?: string;
   lastProvider?: string;
   lastModel?: string;
 }
@@ -164,6 +167,7 @@ export class Storage {
         apiKeys: { ...defaults.apiKeys, ...parsed.apiKeys },
         lastProvider: parsed.lastProvider,
         lastModel: parsed.lastModel,
+        ollamaBaseUrl: parsed.ollamaBaseUrl,
       };
 
       let migrated = false;
@@ -193,6 +197,9 @@ export class Storage {
       }
       if (this.data.lastModel !== undefined) {
         toPersist.lastModel = this.data.lastModel;
+      }
+      if (this.data.ollamaBaseUrl !== undefined) {
+        toPersist.ollamaBaseUrl = this.data.ollamaBaseUrl;
       }
       fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
       fs.writeFileSync(this.filePath, JSON.stringify(toPersist, null, 2), 'utf-8');
@@ -225,6 +232,22 @@ export class Storage {
   saveLastChoice(provider: string, model: string): void {
     this.data.lastProvider = provider;
     this.data.lastModel = model;
+    this.save();
+  }
+
+  /** Base URL of the local Ollama server, falling back to the localhost default. */
+  getOllamaBaseUrl(): string {
+    return this.data.ollamaBaseUrl?.trim() || DEFAULT_OLLAMA_BASE_URL;
+  }
+
+  /** Persists the local Ollama base URL; an empty value restores the default. */
+  setOllamaBaseUrl(baseUrl: string): void {
+    const trimmed = baseUrl.trim();
+    if (trimmed) {
+      this.data.ollamaBaseUrl = trimmed;
+    } else {
+      delete this.data.ollamaBaseUrl;
+    }
     this.save();
   }
 

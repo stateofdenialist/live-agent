@@ -10,7 +10,14 @@
  * Re-run whenever the SDK is updated to get new tools automatically.
  */
 
-import { Project, ClassDeclaration, MethodDeclaration, ParameterDeclaration, Type } from 'ts-morph';
+import {
+  Project,
+  ClassDeclaration,
+  JSDocParameterTag,
+  MethodDeclaration,
+  ParameterDeclaration,
+  Type,
+} from 'ts-morph';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -103,6 +110,28 @@ export const TOOL_DESCRIPTION_OVERRIDES: Record<string, string> = {
     'Inserts a built-in Live device. Drum Rack and Sampler start **empty** (no kit/sample). ' +
     'For immediate sound use Operator, Analog, or Drift on MIDI tracks. ' +
     'To load audio, import the file with resources_import_into_project then simpler_replace_sample.',
+  // SDK JSDoc on these describes the return value or result rather than the action.
+  song_create_midi_track:
+    'Creates a MIDI track. It is inserted after the last selected track, or appended when no track is selected.',
+  song_create_audio_track:
+    'Creates an audio track. It is inserted after the last selected track, or appended when no track is selected.',
+  song_create_scene:
+    'Creates a scene (session row) at the given 0-based index; pass -1 to append it at the end.',
+  song_create_cue_point:
+    'Creates a cue point (arrangement marker) at the given time, measured in beats from the start of the arrangement.',
+  song_set_tempo: 'Sets the Live Set tempo in BPM.',
+  track_create_take_lane:
+    'Creates a take lane on this track, appended after the existing take lanes.',
+  track_duplicate_device:
+    "Duplicates a device in the track's device chain; the copy is placed directly after the original.",
+  chain_duplicate_device:
+    'Duplicates a device inside a rack chain; the copy is placed directly after the original.',
+  device_parameter_get_value: "Reads a device parameter's current value.",
+  device_parameter_set_value:
+    'Sets a device parameter value, on the same numeric scale as its min/max (see get_live_state).',
+  rack_device_insert_chain: 'Inserts a chain into a Rack device at the given 0-based index.',
+  take_lane_create_midi_clip: 'Creates a MIDI clip on a take lane in the arrangement timeline.',
+  midi_clip_set_notes: 'Replaces all notes in the MIDI clip.',
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -226,7 +255,11 @@ function extractMethods(cls: ClassDeclaration, className: string): GeneratedTool
 
     tools.push({
       name: toolName,
-      description: TOOL_DESCRIPTION_OVERRIDES[toolName] ?? jsDoc ?? `Calls ${className}.${name}().`,
+      // `??` would keep an empty JSDoc string, leaving tools with no description.
+      description:
+        TOOL_DESCRIPTION_OVERRIDES[toolName] ||
+        jsDoc ||
+        `Calls ${className}.${name}() on the Live Set.`,
       targetClass: className,
       method: name,
       params,
@@ -268,7 +301,9 @@ function extractSetters(cls: ClassDeclaration, className: string): GeneratedTool
     tools.push({
       name: toolName,
       description:
-        TOOL_DESCRIPTION_OVERRIDES[toolName] ?? jsDoc ?? `Sets the ${propName} property on ${className}.`,
+        TOOL_DESCRIPTION_OVERRIDES[toolName] ||
+        jsDoc ||
+        `Sets the ${propName} property on ${className}.`,
       targetClass: className,
       method: `set ${propName}`,
       params: [valueParam],
@@ -285,6 +320,7 @@ function extractSetters(cls: ClassDeclaration, className: string): GeneratedTool
 
 function buildParams(method: MethodDeclaration, className: string): ToolParam[] | null {
   const result: ToolParam[] = [];
+  const paramDocs = getParamDocs(method);
 
   for (const param of method.getParameters()) {
     const paramName = param.getName();
@@ -321,6 +357,10 @@ function buildParams(method: MethodDeclaration, className: string): ToolParam[] 
         const propType = prop.getTypeAtLocation(method);
         const propSchema = typeToJsonSchema(propType, propName, className);
         if (!propSchema) continue;
+        propSchema.description =
+          propSchema.description ||
+          paramDocs.get(propName) ||
+          `The ${humanizeName(propName)} for ${className}.${method.getName()}().`;
         inlineProps[propName] = propSchema;
         if (!prop.isOptional()) required.push(propName);
       }
@@ -345,6 +385,12 @@ function buildParams(method: MethodDeclaration, className: string): ToolParam[] 
     if (schema === null) {
       // Completely unsupported type — skip the whole method
       return null;
+    }
+
+    if (!schema.description) {
+      schema.description =
+        paramDocs.get(paramName) ||
+        `The ${humanizeName(paramName)} for ${className}.${method.getName()}().`;
     }
 
     result.push({
@@ -595,11 +641,37 @@ function getJsDoc(
 ): string {
   const docs = node.getJsDocs();
   if (docs.length === 0) return '';
-  return docs
-    .map((d) => d.getDescription().trim())
-    .join(' ')
-    .replace(/\n/g, ' ')
+  return cleanDoc(docs.map((d) => d.getDescription()).join(' '));
+}
+
+/** Normalises JSDoc text so it reads well inside a model prompt. */
+function cleanDoc(text: string): string {
+  return text
+    .replace(/\{@link\s+([^}]+)\}/g, '$1')
+    .replace(/^\s*[-–]\s*/, '')
     .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Extracts `@param name description` docs declared on a method's JSDoc. */
+function getParamDocs(method: MethodDeclaration): Map<string, string> {
+  const docs = new Map<string, string>();
+  for (const jsDoc of method.getJsDocs()) {
+    for (const tag of jsDoc.getTags()) {
+      if (!(tag instanceof JSDocParameterTag)) continue;
+      const description = cleanDoc(tag.getCommentText() ?? '');
+      if (description) docs.set(tag.getName(), description);
+    }
+  }
+  return docs;
+}
+
+/** `startTime` → `start time`, `track_id` → `track id`. */
+function humanizeName(name: string): string {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .toLowerCase()
     .trim();
 }
 

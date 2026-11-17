@@ -1,6 +1,9 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { ProvidersRegistry } from '../types';
 
+/** Default endpoint of a local Ollama server. */
+export const DEFAULT_OLLAMA_BASE_URL = 'http://localhost:11434';
+
 /** Static provider/model registry. */
 export const PROVIDERS: ProvidersRegistry = {
   openai: {
@@ -31,6 +34,17 @@ export const PROVIDERS: ProvidersRegistry = {
       { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
       { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (preview)' },
       { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite' },
+    ],
+  },
+  ollama: {
+    label: 'Ollama (local)',
+    default: 'gpt-oss:20b',
+    requiresKey: false,
+    models: [
+      { id: 'gpt-oss:20b', label: 'gpt-oss:20b' },
+      { id: 'gemma4:12b', label: 'gemma4:12b' },
+      { id: 'gemma4:26b', label: 'gemma4:26b' },
+      { id: 'llama3.1:8b', label: 'llama3.1:8b' },
     ],
   },
 };

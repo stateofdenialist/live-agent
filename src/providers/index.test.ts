@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createProvider, PROVIDERS } from './index.js';
+import { createProvider, providerRequiresKey, PROVIDERS } from './index.js';
 
 describe('createProvider', () => {
   it('throws for an unknown provider id', () => {
@@ -15,11 +15,36 @@ describe('createProvider', () => {
   });
 });
 
+describe('providerRequiresKey', () => {
+  it('requires a key for cloud providers only', () => {
+    expect(providerRequiresKey('openai')).toBe(true);
+    expect(providerRequiresKey('anthropic')).toBe(true);
+    expect(providerRequiresKey('gemini')).toBe(true);
+    expect(providerRequiresKey('ollama')).toBe(false);
+  });
+
+  it('defaults to requiring a key for unknown providers', () => {
+    expect(providerRequiresKey('not-a-provider')).toBe(true);
+  });
+});
+
 describe('PROVIDERS registry', () => {
-  it('defines openai, anthropic, and gemini', () => {
+  it('defines openai, anthropic, gemini, and ollama', () => {
     expect(PROVIDERS).toHaveProperty('openai');
     expect(PROVIDERS).toHaveProperty('anthropic');
     expect(PROVIDERS).toHaveProperty('gemini');
+    expect(PROVIDERS).toHaveProperty('ollama');
+  });
+
+  it('offers the installed local Ollama models', () => {
+    expect(PROVIDERS.ollama.default).toBe('gpt-oss:20b');
+    expect(PROVIDERS.ollama.requiresKey).toBe(false);
+    expect(PROVIDERS.ollama.models.map((m) => m.id)).toEqual([
+      'gpt-oss:20b',
+      'gemma4:12b',
+      'gemma4:26b',
+      'llama3.1:8b',
+    ]);
   });
 
   it('each provider has a non-empty label', () => {

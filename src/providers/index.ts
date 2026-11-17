@@ -2,6 +2,8 @@ import {
   openaiStream,
   anthropicStream,
   geminiStream,
+  ollamaStream,
+  DEFAULT_OLLAMA_BASE_URL,
   type ProviderMsg,
   type ToolSchema as HttpToolSchema,
   type HttpChunk,
@@ -10,6 +12,7 @@ import {
 // ─── Shared types ─────────────────────────────────────────────────────────────
 
 export type { ProviderMsg as ProviderMessage };
+export { DEFAULT_OLLAMA_BASE_URL };
 
 export interface ToolCall {
   id: string;
@@ -54,6 +57,7 @@ export interface ProviderAdapter {
 export const PROVIDERS = {
   openai: {
     label: 'OpenAI',
+    requiresKey: true,
     models: [
       { id: 'gpt-5.5', label: 'GPT-5.5' },
       { id: 'gpt-5.5-pro', label: 'GPT-5.5 Pro' },
@@ -66,6 +70,7 @@ export const PROVIDERS = {
   },
   anthropic: {
     label: 'Anthropic',
+    requiresKey: true,
     models: [
       { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
       { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
@@ -75,6 +80,7 @@ export const PROVIDERS = {
   },
   gemini: {
     label: 'Google Gemini',
+    requiresKey: true,
     models: [
       { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
       { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (preview)' },
@@ -82,23 +88,46 @@ export const PROVIDERS = {
     ],
     default: 'gemini-3.1-flash-lite',
   },
+  ollama: {
+    label: 'Ollama (local)',
+    requiresKey: false,
+    models: [
+      { id: 'gpt-oss:20b', label: 'gpt-oss:20b' },
+      { id: 'gemma4:12b', label: 'gemma4:12b' },
+      { id: 'gemma4:26b', label: 'gemma4:26b' },
+      { id: 'llama3.1:8b', label: 'llama3.1:8b' },
+    ],
+    default: 'gpt-oss:20b',
+  },
 } as const;
 
 export type ProviderId = keyof typeof PROVIDERS;
 
+/** Whether chatting with this provider requires a stored API key. */
+export function providerRequiresKey(providerId: string): boolean {
+  const entry: { requiresKey?: boolean } | undefined = PROVIDERS[providerId as ProviderId];
+  return entry?.requiresKey !== false;
+}
+
 // ─── Factory ─────────────────────────────────────────────────────────────────
 
+export interface ProviderOptions {
+  /** Base URL for local providers that expose an OpenAI-compatible API. */
+  baseUrl?: string;
+}
+
+type StreamFn = (
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  messages: ProviderMsg[],
+  tools: HttpToolSchema[],
+  baseUrl?: string,
+) => AsyncGenerator<HttpChunk>;
+
 /** Adapts the http-stream generators to the ProviderAdapter interface. */
-function makeAdapter(
-  fn: (
-    apiKey: string,
-    model: string,
-    systemPrompt: string,
-    messages: ProviderMsg[],
-    tools: HttpToolSchema[],
-  ) => AsyncGenerator<HttpChunk>,
-): (apiKey: string) => ProviderAdapter {
-  return (apiKey) => ({
+function makeAdapter(fn: StreamFn) {
+  return (apiKey: string, baseUrl?: string): ProviderAdapter => ({
     chat({ model, systemPrompt, messages, tools }): AsyncIterable<StreamChunk> {
       return fn(
         apiKey,
@@ -106,6 +135,7 @@ function makeAdapter(
         systemPrompt,
         messages,
         tools as HttpToolSchema[],
+        baseUrl,
       ) as AsyncIterable<StreamChunk>;
     },
   });
@@ -115,10 +145,15 @@ const adapters = {
   openai: makeAdapter(openaiStream),
   anthropic: makeAdapter(anthropicStream),
   gemini: makeAdapter(geminiStream),
+  ollama: makeAdapter(ollamaStream),
 };
 
-export function createProvider(providerId: string, apiKey: string): ProviderAdapter {
+export function createProvider(
+  providerId: string,
+  apiKey: string,
+  options: ProviderOptions = {},
+): ProviderAdapter {
   const factory = adapters[providerId as keyof typeof adapters];
   if (!factory) throw new Error(`Unknown provider: ${providerId}`);
-  return factory(apiKey);
+  return factory(apiKey, options.baseUrl);
 }

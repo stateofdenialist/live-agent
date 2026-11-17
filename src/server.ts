@@ -20,7 +20,7 @@ import {
 import { executeToolWithRecovery } from './agent/tool-execution.js';
 import { GENERATED_TOOL_SCHEMAS } from './agent/generated-tools.js';
 import { CUSTOM_TOOL_SCHEMAS } from './agent/tools.js';
-import { createProvider, type ProviderMessage } from './providers/index.js';
+import { createProvider, providerRequiresKey, type ProviderMessage } from './providers/index.js';
 import { DESTRUCTIVE_TOOLS } from './agent/safety.js';
 import { pruneHistoryForProvider } from './history-prune.js';
 import { stringifyJson, toJsonSafe } from './json.js';
@@ -152,7 +152,7 @@ type WebViewMessage =
   | { type: 'chat'; text: string; provider: string; model: string }
   | { type: 'clear_history' }
   | { type: 'get_settings' }
-  | { type: 'save_settings'; keys: Record<string, string> }
+  | { type: 'save_settings'; keys: Record<string, string>; ollamaBaseUrl?: string }
   | { type: 'set_active_choice'; provider: string; model: string }
   | { type: 'clear_key'; provider: string }
   | { type: 'open_url'; url: string }
@@ -302,6 +302,7 @@ async function handleMessage(
           keys: storage.getMaskedKeys(),
           lastProvider: storage.getLastProvider(),
           lastModel: storage.getLastModel(),
+          ollamaBaseUrl: storage.getOllamaBaseUrl(),
         }),
       );
       break;
@@ -311,6 +312,9 @@ async function handleMessage(
         if (key && key !== '••••••••') {
           storage.setApiKey(provider, key);
         }
+      }
+      if (msg.ollamaBaseUrl !== undefined) {
+        storage.setOllamaBaseUrl(msg.ollamaBaseUrl);
       }
       ws.send(JSON.stringify({ type: 'settings_saved' }));
       break;
@@ -357,8 +361,8 @@ async function handleChat(
   sessionId: string,
   agentBatchRef: { stepsInBatch: number },
 ): Promise<void> {
-  const apiKey = storage.getApiKey(providerId);
-  if (!apiKey) {
+  const apiKey = storage.getApiKey(providerId) ?? '';
+  if (providerRequiresKey(providerId) && !apiKey) {
     ws.send(
       JSON.stringify({
         type: 'error',
@@ -372,7 +376,9 @@ async function handleChat(
   ws.send(JSON.stringify({ type: 'stream_start' }));
 
   try {
-    const provider = createProvider(providerId, apiKey);
+    const provider = createProvider(providerId, apiKey, {
+      baseUrl: storage.getOllamaBaseUrl(),
+    });
     const song = agentContext.getSong();
 
     // Build the system prompt once per user message. We keep it constant so that
@@ -584,8 +590,8 @@ async function handleRefreshProjectMemories(
   getSong: () => Song<'1.0.0'>,
   storage: Storage,
 ): Promise<void> {
-  const apiKey = storage.getApiKey(providerId);
-  if (!apiKey) {
+  const apiKey = storage.getApiKey(providerId) ?? '';
+  if (providerRequiresKey(providerId) && !apiKey) {
     ws.send(
       JSON.stringify({
         type: 'error',
@@ -606,7 +612,9 @@ structure and style. Return only the bullet points, no preamble.`;
   ws.send(JSON.stringify({ type: 'stream_start' }));
 
   try {
-    const provider = createProvider(providerId, apiKey);
+    const provider = createProvider(providerId, apiKey, {
+      baseUrl: storage.getOllamaBaseUrl(),
+    });
     let fullText = '';
 
     for await (const chunk of provider.chat({
@@ -675,7 +683,7 @@ async function handleDebug(
   const apiKey = storage.getApiKey(providerId);
   emit(`API key set: ${!!apiKey}  provider=${providerId}  model=${model}`);
   try {
-    createProvider(providerId, apiKey ?? 'test');
+    createProvider(providerId, apiKey ?? 'test', { baseUrl: storage.getOllamaBaseUrl() });
     emit(`createProvider: OK`);
   } catch (e) {
     emit(`createProvider: FAIL – ${e}`);

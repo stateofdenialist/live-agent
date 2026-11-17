@@ -2,7 +2,7 @@
 
 An AI assistant built into Ableton Live. Describe what you want in plain English — Live Agent executes it directly on your session.
 
-> *"Delete all audio tracks. In one of the remaining MIDI tracks, add a punchy synth and a 4-bar clip with an Em bassline. Lastly, set the tempo to 150."* → Done.
+> _"Delete all audio tracks. In one of the remaining MIDI tracks, add a punchy synth and a 4-bar clip with an Em bassline. Lastly, set the tempo to 150."_ → Done.
 
 [![Live Agent demo](https://img.youtube.com/vi/AFiYc4WvxQU/hqdefault.jpg)](https://youtu.be/AFiYc4WvxQU)
 
@@ -21,6 +21,7 @@ Live Agent opens a chat panel inside Live via the [Ableton Extensions SDK](https
 **Web lookup & learning.** `web_search` looks up song tabs and reference, production techniques, mixing tips, and Ableton Live / built-in device guidance — DuckDuckGo links, ASCII tab excerpts, Ableton.com articles when fetchable, and Wikipedia for song overview.
 
 **Three confirmation modes** to match how much you trust the agent:
+
 - **Review** — approve every action before it runs
 - **Guard** — auto-approve safe actions, confirm destructive ones
 - **Auto** — run everything immediately
@@ -31,13 +32,14 @@ Live Agent opens a chat panel inside Live via the [Ableton Extensions SDK](https
 
 **Supported providers:**
 
-| Provider | Models |
-|---|---|
-| OpenAI | GPT-5.5, GPT-5.5 Pro, GPT-5.4, GPT-5.4 mini, o3, o3 Pro |
-| Anthropic | Claude Opus 4.8, Claude Sonnet 4.6, Claude Haiku 4.5 |
-| Google | Gemini 3.5 Flash, Gemini 3.1 Pro (preview), Gemini 3.1 Flash-Lite |
+| Provider       | Models                                                                                |
+| -------------- | ------------------------------------------------------------------------------------- |
+| OpenAI         | GPT-5.5, GPT-5.5 Pro, GPT-5.4, GPT-5.4 mini, o3, o3 Pro                               |
+| Anthropic      | Claude Opus 4.8, Claude Sonnet 4.6, Claude Haiku 4.5                                  |
+| Google         | Gemini 3.5 Flash, Gemini 3.1 Pro (preview), Gemini 3.1 Flash-Lite                     |
+| Ollama (local) | gpt-oss:20b, gemma4:12b, gemma4:26b, llama3.1:8b — no API key; server URL in Settings |
 
-API keys are stored locally in Live's extension storage and never leave your machine.
+API keys are stored locally in Live's extension storage and never leave your machine. Local models run with a 32k context and a 30-minute keep-alive — set `LIVE_AGENT_NUM_CTX` to override the context size.
 
 ---
 
@@ -81,7 +83,7 @@ npm run build
 - Go to **Live → Preferences → Extensions**
 - Enable **Developer Mode**
 - Point Live to this project folder
-- Run `npm start` — Live connects and hot-reloads on save
+- Run `npm start` — picks a local model in the terminal (if Ollama is running), then Live connects and hot-reloads on save
 
 ### 4. Add your API key
 
@@ -145,7 +147,7 @@ ui/src/                     # React + Vite webview
 
 Full issue tracking is on [GitHub](https://github.com/nonogv/live-agent/issues) (`v1` / `v2` / `v3` labels). High-level milestones:
 
-**v1 — Developer release** *(in progress)*  
+**v1 — Developer release** _(in progress)_  
 Polished, stable experience for developer-musicians who build from source and bring their own API key. Manual QA across all three providers is the remaining gate.
 
 **v2 — Power features**  

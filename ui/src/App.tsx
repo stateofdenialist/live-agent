@@ -175,7 +175,7 @@ export function App() {
     dispatch({ type: 'TOGGLE_TOOL_FOLD', id });
   }
 
-  function handleSaveSettings(payload: { keys: Record<string, string> }) {
+  function handleSaveSettings(payload: { keys: Record<string, string>; ollamaBaseUrl?: string }) {
     sendMsg({ type: 'save_settings', ...payload });
   }
 

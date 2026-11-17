@@ -12,3 +12,9 @@ settings.json
 debug-probe.txt
 history.json
 sessions/
+
+# One-shot model choice written by `npm start`
+live-agent.config.json
+
+# Packaged extension archives
+*.ablx

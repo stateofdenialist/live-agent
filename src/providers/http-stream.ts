@@ -5,6 +5,7 @@
 
 import https from 'node:https';
 import http from 'node:http';
+import { URL } from 'node:url';
 
 /** Parse `retryDelay` seconds from a Gemini/Google 429 error body. */
 function parseRetryDelay(body: string): number {
@@ -30,6 +31,10 @@ interface ReqOptions {
   method: string;
   headers: Record<string, string>;
   body: unknown;
+  /** Transport protocol — defaults to https. Local servers (Ollama) use plain http. */
+  protocol?: 'https' | 'http';
+  /** Explicit port, e.g. 11434 for a default Ollama install. */
+  port?: number;
 }
 
 /** Make a streaming HTTPS POST and yield raw SSE/NDJSON lines. Retries once on 429. */
@@ -54,6 +59,7 @@ async function* streamLinesRaw(opts: ReqOptions): AsyncGenerator<string> {
     hostname: opts.hostname,
     path: opts.path,
     method: opts.method,
+    ...(opts.port !== undefined ? { port: opts.port } : {}),
     headers: {
       ...opts.headers,
       'Content-Type': 'application/json',
@@ -61,12 +67,14 @@ async function* streamLinesRaw(opts: ReqOptions): AsyncGenerator<string> {
     },
   };
 
+  const transport = opts.protocol === 'http' ? http : https;
+
   const lines: string[] = [];
   let resolve: (() => void) | null = null;
   let done = false;
   let error: Error | null = null;
 
-  const req = https.request(reqOpts, (res: http.IncomingMessage) => {
+  const req = transport.request(reqOpts, (res: http.IncomingMessage) => {
     let buf = '';
 
     res.on('data', (chunk: Buffer) => {
@@ -133,7 +141,7 @@ async function* streamLinesRaw(opts: ReqOptions): AsyncGenerator<string> {
   if (error) throw error;
 }
 
-// ── OpenAI ───────────────────────────────────────────────────────────────────
+// ── OpenAI-compatible (OpenAI, Ollama) ──────────────────────────────────────
 
 interface OAIToolCallDelta {
   index: number;
@@ -148,11 +156,9 @@ export async function* openaiStream(
   messages: ProviderMsg[],
   tools: ToolSchema[],
 ): HttpChunkStream {
-  const oaiMessages = buildOAIMessages(systemPrompt, messages);
-
   const body = {
     model,
-    messages: oaiMessages,
+    messages: buildOAIMessages(systemPrompt, messages),
     tools: tools.map((t) => ({
       type: 'function',
       function: { name: t.name, description: t.description, parameters: t.parameters },
@@ -212,6 +218,142 @@ export async function* openaiStream(
       }
     }
   }
+}
+
+// ── Ollama (local, native API) ─────────────────────────────────────────────
+
+/** Default base URL of a local Ollama server. */
+export const DEFAULT_OLLAMA_BASE_URL = 'http://localhost:11434';
+
+/**
+ * Context window requested from Ollama, which defaults to 4096.
+ * The agent's system prompt (live session state) plus ~48 tool schemas needs
+ * far more than that; when Ollama truncates, models stop emitting tool calls
+ * and print JSON as prose instead.
+ * Override with `LIVE_AGENT_NUM_CTX` (lower it on memory-constrained machines).
+ */
+const OLLAMA_DEFAULT_NUM_CTX = 32768;
+
+/** Keeps the model resident between turns; Ollama's own default unloads after 5 minutes. */
+const OLLAMA_KEEP_ALIVE = '30m';
+
+/** Parses `LIVE_AGENT_NUM_CTX`, falling back to the default for anything invalid. */
+export function resolveOllamaNumCtx(raw: string | undefined): number {
+  const value = Number.parseInt((raw ?? '').trim(), 10);
+  return Number.isFinite(value) && value > 0 ? value : OLLAMA_DEFAULT_NUM_CTX;
+}
+
+/** Tool-call shape returned by Ollama's native `/api/chat`. */
+interface OllamaToolCall {
+  function?: { name?: string; arguments?: unknown };
+}
+
+/** Serialises conversation history into Ollama's native message format. */
+export function buildOllamaMessages(systemPrompt: string, messages: ProviderMsg[]): unknown[] {
+  const result: unknown[] = [{ role: 'system', content: systemPrompt }];
+  for (const m of messages) {
+    if (m.role === 'assistant' && m.toolCall) {
+      result.push({
+        role: 'assistant',
+        content: m.content || '',
+        tool_calls: [{ function: { name: m.toolCall.name, arguments: m.toolCall.args } }],
+      });
+    } else if (m.role === 'tool') {
+      result.push({ role: 'tool', content: m.content, tool_name: m.toolName });
+    } else {
+      result.push({ role: m.role, content: m.content });
+    }
+  }
+  return result;
+}
+
+/** Parses Ollama's newline-delimited JSON chat stream into chunks. */
+export async function* parseOllamaStream(lines: AsyncGenerator<string>): HttpChunkStream {
+  let counter = 0;
+
+  for await (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    let chunk: {
+      message?: { content?: string; tool_calls?: OllamaToolCall[] };
+      error?: string;
+    };
+    try {
+      chunk = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+
+    if (chunk.error) throw new Error(`Ollama: ${chunk.error}`);
+    if (chunk.message?.content) yield { type: 'text', text: chunk.message.content };
+
+    for (const call of chunk.message?.tool_calls ?? []) {
+      const name = call.function?.name;
+      if (!name) continue;
+
+      // Native responses carry an object, but older builds stringify it.
+      let args = call.function?.arguments;
+      if (typeof args === 'string') {
+        try {
+          args = JSON.parse(args);
+        } catch {
+          args = {};
+        }
+      }
+
+      yield {
+        type: 'tool_call',
+        id: `call_${Date.now()}_${counter++}`,
+        name,
+        args: (args ?? {}) as Record<string, unknown>,
+      };
+    }
+  }
+}
+
+/**
+ * Streams a chat completion from a local Ollama server using its native API,
+ * the only endpoint that accepts `options.num_ctx`.
+ * `apiKey` is optional — it is only sent when the server sits behind a proxy.
+ */
+export async function* ollamaStream(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  messages: ProviderMsg[],
+  tools: ToolSchema[],
+  baseUrl: string = DEFAULT_OLLAMA_BASE_URL,
+): HttpChunkStream {
+  const url = new URL(baseUrl.trim() || DEFAULT_OLLAMA_BASE_URL);
+  // Tolerate a pasted OpenAI-style URL such as http://localhost:11434/v1.
+  const rootPath = url.pathname.replace(/\/+$/, '').replace(/\/v1$/, '');
+
+  yield* parseOllamaStream(
+    streamLines({
+      hostname: url.hostname,
+      path: `${rootPath}/api/chat`,
+      method: 'POST',
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+      body: {
+        model,
+        messages: buildOllamaMessages(systemPrompt, messages),
+        ...(tools.length > 0
+          ? {
+              tools: tools.map((t) => ({
+                type: 'function',
+                function: { name: t.name, description: t.description, parameters: t.parameters },
+              })),
+            }
+          : {}),
+        stream: true,
+        options: { num_ctx: resolveOllamaNumCtx(process.env.LIVE_AGENT_NUM_CTX) },
+        keep_alive: OLLAMA_KEEP_ALIVE,
+      },
+      protocol: url.protocol === 'http:' ? 'http' : 'https',
+      port: url.port ? Number.parseInt(url.port, 10) : undefined,
+    }),
+  );
 }
 
 // ── Anthropic ────────────────────────────────────────────────────────────────

@@ -10,16 +10,22 @@ Versioning follows [Semantic Versioning](https://semver.org).
 ## [Unreleased]
 
 ### Fixed
+
 - **Auto mode** — skips multi-step continue checkpoints (Review/Guard still pause every 5 steps)
 - **Continue checkpoint UI** — accept removes the prompt entirely; decline keeps the message with a stop icon (no duplicate streamed text)
 - **`web_search`** — DuckDuckGo Lite for tab-site links (Ultimate Guitar, Songsterr, BigBassTabs, etc.) + ASCII tab excerpts from fetchable pages; Wikipedia kept for song overview
 
 ### Added
+
+- **Local Ollama provider** — `gpt-oss:20b` via Ollama's OpenAI-compatible API, no API key required; server URL configurable in Settings (defaults to `http://localhost:11434/v1`)
 - **`web_search` tool** — Wikipedia + DuckDuckGo lookup for tempo, bass lines, and other musical reference (no API key)
 - **Production & Live learning via `web_search`** — Ableton.com article excerpts, `site:ableton.com` query variants for built-in devices, and system-prompt guidance for mixing/sound-design/Live workflow questions (Wikipedia skipped for production queries)
 - **`resources_import_into_project` tool** — copies an audio file from disk into the Live project (SDK `Resources.importIntoProject`)
 
 ### Changed
+
+- **Tool descriptions** — the generator no longer emits empty descriptions (`??` kept blank JSDoc); it now uses SDK JSDoc, then `@param` docs, then a humanised parameter name, with overrides for tools whose JSDoc described the result rather than the action
+- **Dev runner** — `npm start` now watches `src/`, `ui/src/` and `scripts/`, rebuilding and restarting the Extension Host on save; stale hosts are cleaned up cross-platform, replacing the `pkill` `prestart` that only worked on macOS/Linux
 - **Tool error recovery** — SDK tool failures return `{ ok: false, error }` to the LLM instead of aborting the agent loop, so the agent can refresh state and retry (e.g. stale track ids after a partial delete)
 - **Live snapshot on layout changes** — track create/delete results (and stale-id failures) include a compact `liveSnapshot` with current track ids so the model does not reuse ids from the opening system prompt
 - **Agent continue checkpoints** — pauses every 5 steps (counted across follow-up messages in the same Live session) with Continue/Stop buttons; hard cap 50 steps per user message
@@ -31,6 +37,7 @@ Versioning follows [Semantic Versioning](https://semver.org).
 ## [0.2.1-alpha.1] — 2026-06-05
 
 ### Added
+
 - **SDK coverage audit** — automated `sdk-coverage` test fails when SDK methods lack tools; 45 generated tools + `get_live_state` with zero gaps ([#13](https://github.com/nonogv/live-agent/issues/13))
 - **`drum_chain_set_receiving_note` tool** — exposes `DrumChain.receivingNote` setter
 - **Richer `get_live_state`** — song grid settings, track solo-mute/group, clip markers/loop/color, audio warp markers, scene time signature, parameter quantization, drum chain receiving note, take-lane clips
@@ -41,6 +48,7 @@ Versioning follows [Semantic Versioning](https://semver.org).
 - **Tool visibility toggle** — debug off hides existing tool-call blocks ([#56](https://github.com/nonogv/live-agent/issues/56))
 
 ### Fixed
+
 - Session history now persists even when the last turn errors ([#52](https://github.com/nonogv/live-agent/issues/52))
 - System prompt token reduction: arrangement clip count hint, mixer send IDs removed from overview ([#55](https://github.com/nonogv/live-agent/issues/55))
 - HTTP 429 rate-limit errors trigger automatic retry after Gemini `retryDelay`
@@ -52,6 +60,7 @@ Versioning follows [Semantic Versioning](https://semver.org).
 ## [0.2.0-alpha.1] — 2026-06-05
 
 ### Added
+
 - **Full SDK coverage** — all 15 SDK classes (`Song`, `Track`, `MidiTrack`, `AudioTrack`, `ClipSlot`, `Clip`, `MidiClip`, `AudioClip`, `Scene`, `CuePoint`, `Device`, `DeviceParameter`, `Simpler`, `RackDevice`, `Chain`, `TakeLane`) exposed as callable tools; auto-generated schemas + executor via `npm run generate`
 - **Rich live state** — `get_live_state` now returns tracks (mute/solo/arm), devices, session/arrangement clips + MIDI notes, mixer (volume/pan/sends), scenes, cue points, take lanes, and the main track
 - **Three-way confirmation mode** — Review (confirm every tool call) / Guard (confirm destructive operations only) / Auto (no confirmation)
@@ -69,6 +78,7 @@ Versioning follows [Semantic Versioning](https://semver.org).
 - **`prestart` guard** — kills stale `ExtensionHostNodeModule` processes before each `npm start`
 
 ### Fixed
+
 - `URL is not defined` in Extension Host sandbox — replaced all AI provider SDKs with a minimal `node:https` streaming client
 - Multi-step agent loop — `handleChat` now runs a `while (round < MAX_ROUNDS)` agentic loop; previously only one LLM round executed per user message
 - UI `uiDir` path — served `dist/ui/` from the wrong relative path after the React migration, causing a white screen
@@ -79,9 +89,10 @@ Versioning follows [Semantic Versioning](https://semver.org).
 
 ---
 
-## [0.1.0-alpha] — 2026-05-29 *(initial private commit)*
+## [0.1.0-alpha] — 2026-05-29 _(initial private commit)_
 
 ### Added
+
 - Ableton Extension scaffold — `manifest.json`, `extension.ts`, `server.ts`
 - Local HTTP + WebSocket server for real-time chat streaming between the Extension Host and the webview
 - Basic flat-HTML webview UI with provider selector, API key input, and chat interface

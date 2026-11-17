@@ -8,6 +8,10 @@ describe('getProviderDefaultModel', () => {
     expect(getProviderDefaultModel('gemini')).toBe('gemini-3.1-flash-lite');
   });
 
+  it('returns gpt-oss:20b as the local Ollama default', () => {
+    expect(getProviderDefaultModel('ollama')).toBe('gpt-oss:20b');
+  });
+
   it('returns empty string for unknown providers', () => {
     expect(getProviderDefaultModel('unknown')).toBe('');
   });
@@ -25,6 +29,13 @@ describe('resolveProviderChoice', () => {
     expect(resolveProviderChoice('openai', 'gpt-5.4')).toEqual({
       provider: 'openai',
       model: 'gpt-5.4',
+    });
+  });
+
+  it('accepts the persisted local Ollama choice', () => {
+    expect(resolveProviderChoice('ollama', 'gpt-oss:20b')).toEqual({
+      provider: 'ollama',
+      model: 'gpt-oss:20b',
     });
   });
 

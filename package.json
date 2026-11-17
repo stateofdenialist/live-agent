@@ -6,8 +6,7 @@
   "main": "dist/extension.js",
   "scripts": {
     "build": "tsc --noEmit && tsx build.ts --production",
-    "prestart": "pkill -f ExtensionHostNodeModule.node || true",
-    "start": "tsx build.ts && extensions-cli run",
+    "start": "tsx scripts/choose-model.ts && tsx scripts/dev.ts",
     "typecheck": "tsc --noEmit",
     "generate": "node --import=tsx/esm scripts/generate-tools.ts",
     "dev:ui": "vite --config ui/vite.config.ts",
@@ -36,7 +35,8 @@
     "extension",
     "openai",
     "claude",
-    "gemini"
+    "gemini",
+    "ollama"
   ],
   "license": "MIT",
   "dependencies": {

@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { ApiKeyField, getKeyInputValue } from '../ApiKeyField';
+import { DEFAULT_OLLAMA_BASE_URL } from '../../hooks/useProviders';
 import type { ContextState, ProvidersRegistry, SettingsPayload } from '../../types';
 
 interface SettingsPanelProps {
   providers: ProvidersRegistry;
   settings: SettingsPayload | null;
   context: ContextState;
-  onSave: (payload: { keys: Record<string, string> }) => void;
+  onSave: (payload: { keys: Record<string, string>; ollamaBaseUrl?: string }) => void;
   onClearKey: (provider: string) => void;
   onOpenUrl: (url: string) => void;
   onClose: () => void;
@@ -21,7 +22,7 @@ const KEY_PLACEHOLDERS: Record<string, string> = {
   gemini: 'AIza…',
 };
 
-const PROVIDER_ORDER = ['openai', 'anthropic', 'gemini'];
+const PROVIDER_ORDER = ['openai', 'anthropic', 'gemini', 'ollama'];
 
 const TEXTAREA_CLASS =
   'w-full resize-none rounded-default border border-border bg-surface2 px-2.5 py-2 text-[13px] text-text outline-none focus:outline focus:outline-1 focus:outline-accent';
@@ -43,6 +44,11 @@ export function SettingsPanel({
   const [projectInstructions, setProjectInstructions] = useState(context.projectInstructions);
   const [globalMemories, setGlobalMemories] = useState(context.globalMemories);
   const [projectMemories, setProjectMemories] = useState(context.projectMemories);
+  const [ollamaBaseUrl, setOllamaBaseUrl] = useState('');
+
+  useEffect(() => {
+    setOllamaBaseUrl(settings?.ollamaBaseUrl ?? '');
+  }, [settings?.ollamaBaseUrl]);
 
   useEffect(() => {
     setGlobalInstructions(context.globalInstructions);
@@ -64,9 +70,11 @@ export function SettingsPanel({
   function handleSave() {
     const keys: Record<string, string> = {};
     for (const id of PROVIDER_ORDER) {
+      // Keyless local providers (Ollama) have no key input.
+      if (providers[id]?.requiresKey === false) continue;
       keys[id] = getKeyInputValue(id);
     }
-    onSave({ keys });
+    onSave({ keys, ollamaBaseUrl: ollamaBaseUrl.trim() });
     showFeedback('Saved ✓');
   }
 
@@ -131,18 +139,41 @@ export function SettingsPanel({
           >
             Google AI Studio
           </a>
-          .
+          . Local models need no key — point the Ollama server field at your endpoint.
         </p>
-        {PROVIDER_ORDER.map((id) => (
-          <ApiKeyField
-            key={id}
-            providerId={id}
-            label={providers[id]?.label ?? id}
-            placeholder={KEY_PLACEHOLDERS[id] ?? ''}
-            isSet={!!settings?.keys[id]}
-            onClear={onClearKey}
-          />
-        ))}
+        {PROVIDER_ORDER.map((id) => {
+          const entry = providers[id];
+          if (entry?.requiresKey === false) {
+            return (
+              <div key={id} className="mb-3 flex items-center gap-2.5">
+                <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-border" />
+                <label className="flex-1 text-[13px]" htmlFor={`base-url-${id}`}>
+                  {entry.label} server
+                </label>
+                <input
+                  id={`base-url-${id}`}
+                  className="flex-[2] rounded-default border border-border bg-surface2 px-2.5 py-2 text-[13px] text-text outline-none focus:outline focus:outline-1 focus:outline-accent"
+                  type="text"
+                  value={ollamaBaseUrl}
+                  onChange={(event) => setOllamaBaseUrl(event.target.value)}
+                  placeholder={DEFAULT_OLLAMA_BASE_URL}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+            );
+          }
+          return (
+            <ApiKeyField
+              key={id}
+              providerId={id}
+              label={entry?.label ?? id}
+              placeholder={KEY_PLACEHOLDERS[id] ?? ''}
+              isSet={!!settings?.keys[id]}
+              onClear={onClearKey}
+            />
+          );
+        })}
       </div>
 
       <div className="mb-6">
