@@ -11,6 +11,7 @@ import type { LiveState, DeviceInfo, ClipInfo } from '../agent/chat.js';
 import { webSearch } from '../agent/web-search.js';
 import type { AgentContext } from './agent-context.js';
 import { reg, clearRegistry } from './handle-registry.js';
+import { compactLiveState } from './compact-state.js';
 import { toJsonSafe } from '../json.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -205,8 +206,12 @@ export async function handleToolCall(
   const song = ctx.getSong();
 
   switch (name) {
-    case 'get_live_state':
-      return toJsonSafe(await getLiveState(song));
+    case 'get_live_state': {
+      const state = await getLiveState(song);
+      // Full detail is hundreds of kilobytes (every device parameter); only send
+      // it when the model explicitly asks, because it floods the context.
+      return toJsonSafe(args['detail'] === 'full' ? state : compactLiveState(state));
+    }
 
     case 'web_search': {
       const query = args['query'];

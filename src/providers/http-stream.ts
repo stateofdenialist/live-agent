@@ -7,10 +7,27 @@ import https from 'node:https';
 import http from 'node:http';
 import { URL } from 'node:url';
 
-/** Parse `retryDelay` seconds from a Gemini/Google 429 error body. */
-function parseRetryDelay(body: string): number {
-  const m = body.match(/"retryDelay"\s*:\s*"(\d+)s"/);
-  return m ? parseInt(m[1], 10) : 60;
+/**
+ * Parse the retry delay from a 429 body: Gemini/Google send `"retryDelay": "60s"`,
+ * OpenAI-compatible servers send `"retry_after": 60`.
+ */
+/**
+ * Whether a 429 body describes an unfunded account rather than a transient limit.
+ * Retrying those only wastes time: the same request fails until someone pays.
+ * "limit exceeded" is deliberately NOT permanent — gateways use it for per-minute
+ * token budgets too (Freebuff answers "Paid API limit exceeded" when a turn's
+ * rounds exceed 100k tokens/minute), and that clears on its own.
+ */
+export function isPermanentQuotaError(body: string): boolean {
+  return /quota|insufficient|out of credits|balance is|billing/i.test(body);
+}
+
+export function parseRetryDelay(body: string): number {
+  const gemini = body.match(/"retryDelay"\s*:\s*"(\d+)s"/);
+  if (gemini) return parseInt(gemini[1], 10);
+  const openai = body.match(/"retry_after"\s*:\s*(\d+)/);
+  if (openai) return parseInt(openai[1], 10);
+  return 60;
 }
 
 export interface HttpChunk {
@@ -37,17 +54,32 @@ interface ReqOptions {
   port?: number;
 }
 
-/** Make a streaming HTTPS POST and yield raw SSE/NDJSON lines. Retries once on 429. */
+/** How many times a 429 is retried before the turn fails. */
+const MAX_RATE_LIMIT_RETRIES = 2;
+
+/**
+ * Make a streaming HTTPS POST and yield raw SSE/NDJSON lines.
+ * A 429 is retried up to MAX_RATE_LIMIT_RETRIES times, waiting for the delay the
+ * server asked for; the final error keeps the server's own explanation so the
+ * cause (throttle, quota, overloaded upstream) stays visible.
+ */
 async function* streamLines(opts: ReqOptions): AsyncGenerator<string> {
-  try {
-    yield* streamLinesRaw(opts);
-  } catch (err) {
-    if (err instanceof Error && 'retryAfterMs' in err) {
-      const delay = (err as Error & { retryAfterMs: number }).retryAfterMs;
-      await new Promise<void>((r) => setTimeout(r, delay));
+  for (let attempt = 0; ; attempt++) {
+    try {
       yield* streamLinesRaw(opts);
-    } else {
-      throw err;
+      return;
+    } catch (err) {
+      const retryAfterMs =
+        err instanceof Error && 'retryAfterMs' in err
+          ? (err as Error & { retryAfterMs: number }).retryAfterMs
+          : null;
+      if (retryAfterMs === null) throw err;
+      if (attempt >= MAX_RATE_LIMIT_RETRIES) {
+        throw new Error(`${(err as Error).message} (gave up after ${attempt + 1} attempts)`, {
+          cause: err,
+        });
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, retryAfterMs));
     }
   }
 }
@@ -74,10 +106,33 @@ async function* streamLinesRaw(opts: ReqOptions): AsyncGenerator<string> {
   let done = false;
   let error: Error | null = null;
 
+  // A provider that accepts the connection and then goes silent would hang the
+  // turn forever — nothing else in this path has a timeout.
+  const idleTimeoutMs = Number.parseInt(process.env.LIVE_AGENT_IDLE_TIMEOUT_MS ?? '', 10) || 90_000;
+  let idleTimer: NodeJS.Timeout | null = null;
+  const stopIdleTimer = (): void => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+  };
+  const touchIdleTimer = (): void => {
+    stopIdleTimer();
+    idleTimer = setTimeout(() => {
+      error = new Error(
+        `Provider sent nothing for ${Math.round(idleTimeoutMs / 1000)}s — giving up`,
+      );
+      done = true;
+      req.destroy();
+      resolve?.();
+    }, idleTimeoutMs);
+  };
+
   const req = transport.request(reqOpts, (res: http.IncomingMessage) => {
     let buf = '';
 
     res.on('data', (chunk: Buffer) => {
+      touchIdleTimer();
       buf += chunk.toString();
       const parts = buf.split('\n');
       buf = parts.pop() ?? '';
@@ -88,6 +143,7 @@ async function* streamLinesRaw(opts: ReqOptions): AsyncGenerator<string> {
     });
 
     res.on('end', () => {
+      stopIdleTimer();
       if (buf) lines.push(buf);
 
       const status = res.statusCode ?? 0;
@@ -97,9 +153,16 @@ async function* streamLinesRaw(opts: ReqOptions): AsyncGenerator<string> {
           .join('\n')
           .replace(/^data: /gm, '')
           .trim();
-        if (status === 429) {
-          const delaySec = parseRetryDelay(body);
-          error = Object.assign(new Error(`Rate-limited — retrying in ${delaySec}s`), {
+        if (status === 429 && isPermanentQuotaError(body)) {
+          // No retry: report the account's own reason immediately.
+          error = new Error(`API quota exhausted (HTTP 429) — ${body.slice(0, 300)}`);
+        } else if (status === 429) {
+          const headerDelay = Number.parseInt(res.headers['retry-after'] ?? '', 10);
+          const delaySec =
+            Number.isFinite(headerDelay) && headerDelay > 0 ? headerDelay : parseRetryDelay(body);
+          // Keep the body: it is the only place the server explains WHY it throttled.
+          const detail = body ? ` — ${body.slice(0, 300)}` : '';
+          error = Object.assign(new Error(`Rate-limited (HTTP 429)${detail}`), {
             retryAfterMs: delaySec * 1000,
           });
         } else {
@@ -112,6 +175,7 @@ async function* streamLinesRaw(opts: ReqOptions): AsyncGenerator<string> {
     });
 
     res.on('error', (err: Error) => {
+      stopIdleTimer();
       error = err;
       done = true;
       resolve?.();
@@ -119,6 +183,7 @@ async function* streamLinesRaw(opts: ReqOptions): AsyncGenerator<string> {
   });
 
   req.on('error', (err: Error) => {
+    stopIdleTimer();
     error = err;
     done = true;
     resolve?.();
@@ -126,22 +191,115 @@ async function* streamLinesRaw(opts: ReqOptions): AsyncGenerator<string> {
 
   req.write(bodyStr);
   req.end();
+  touchIdleTimer();
 
-  while (true) {
-    while (lines.length > 0) {
-      yield lines.shift()!;
+  try {
+    while (true) {
+      while (lines.length > 0) {
+        yield lines.shift()!;
+      }
+      if (done) break;
+      await new Promise<void>((r) => {
+        resolve = r;
+      });
+      resolve = null;
     }
-    if (done) break;
-    await new Promise<void>((r) => {
-      resolve = r;
-    });
-    resolve = null;
-  }
 
-  if (error) throw error;
+    if (error) throw error;
+  } finally {
+    stopIdleTimer();
+    // Callers stop reading at [DONE], never at EOF, so without this the socket
+    // stays open until the server times it out. Gateways that meter concurrent
+    // requests keep counting the finished one as active, and the next round in
+    // the same turn is rejected with a limit error.
+    if (!req.destroyed) req.destroy();
+  }
 }
 
 // ── OpenAI-compatible (OpenAI, Ollama) ──────────────────────────────────────
+
+/** Default endpoint for OpenAI's chat-completions API. */
+export const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
+
+/** Per-call transport options shared by the OpenAI-compatible stream functions. */
+export interface StreamOptions {
+  /** Base URL of an OpenAI-compatible API; ignored by providers with a fixed endpoint. */
+  baseUrl?: string;
+  /**
+   * Ask for SSE deltas (the default). `false` requests a single JSON reply, which
+   * some OpenAI-compatible servers require for models that cannot stream.
+   */
+  stream?: boolean;
+}
+
+/** Splits an OpenAI-compatible base URL into the request coordinates for `/chat/completions`. */
+export function openaiRequestTarget(baseUrl?: string): {
+  hostname: string;
+  path: string;
+  protocol: 'https' | 'http';
+  port?: number;
+} {
+  const raw = (baseUrl ?? '').trim() || DEFAULT_OPENAI_BASE_URL;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`Invalid base URL "${raw}"`);
+  }
+  // Tolerate a trailing slash; keep any path prefix (e.g. /api/v1/paid).
+  const rootPath = url.pathname.replace(/\/+$/, '');
+  return {
+    hostname: url.hostname,
+    path: `${rootPath}/chat/completions`,
+    protocol: url.protocol === 'http:' ? 'http' : 'https',
+    ...(url.port ? { port: Number.parseInt(url.port, 10) } : {}),
+  };
+}
+
+/** Shape of a non-streamed OpenAI chat completion. */
+interface OAICompletion {
+  error?: { message?: string };
+  choices?: Array<{
+    message?: {
+      content?: string | null;
+      tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }>;
+    };
+  }>;
+}
+
+/**
+ * Reads a single non-streamed completion body into text and tool calls.
+ * Used for OpenAI-compatible models whose catalog entry cannot stream; the
+ * chunks are then replayed so callers see the same shape as an SSE turn.
+ */
+export function parseOpenAICompletion(body: string): {
+  text: string;
+  toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }>;
+} {
+  let parsed: OAICompletion;
+  try {
+    parsed = JSON.parse(body) as OAICompletion;
+  } catch {
+    throw new Error(`Unreadable response: ${body.slice(0, 200)}`);
+  }
+  if (parsed.error) throw new Error(parsed.error.message ?? 'Provider returned an error');
+
+  const message = parsed.choices?.[0]?.message;
+  const text = message?.content ?? '';
+  const toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
+  for (const call of message?.tool_calls ?? []) {
+    const name = call.function?.name;
+    if (!name) continue;
+    let args: Record<string, unknown> = {};
+    try {
+      args = JSON.parse(call.function?.arguments || '{}') as Record<string, unknown>;
+    } catch {
+      /* leave empty — the agent loop surfaces a schema error for the model to fix */
+    }
+    toolCalls.push({ id: call.id ?? `call_${toolCalls.length}`, name, args });
+  }
+  return { text, toolCalls };
+}
 
 interface OAIToolCallDelta {
   index: number;
@@ -155,6 +313,7 @@ export async function* openaiStream(
   systemPrompt: string,
   messages: ProviderMsg[],
   tools: ToolSchema[],
+  options: StreamOptions = {},
 ): HttpChunkStream {
   const body = {
     model,
@@ -163,19 +322,26 @@ export async function* openaiStream(
       type: 'function',
       function: { name: t.name, description: t.description, parameters: t.parameters },
     })),
-    stream: true,
+    stream: options.stream !== false,
   };
 
   const partialCalls: Record<number, { id: string; name: string; args: string }> = {};
+  // Non-SSE servers answer with one JSON document. Buffer those lines so they can
+  // be parsed after the stream ends instead of being dropped on the floor.
+  const rawLines: string[] = [];
+  let sawSse = false;
 
   for await (const line of streamLines({
-    hostname: 'api.openai.com',
-    path: '/v1/chat/completions',
+    ...openaiRequestTarget(options.baseUrl),
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}` },
     body,
   })) {
-    if (!line.startsWith('data: ')) continue;
+    if (!line.startsWith('data: ')) {
+      if (line.trim()) rawLines.push(line);
+      continue;
+    }
+    sawSse = true;
     const data = line.slice(6).trim();
     if (data === '[DONE]') break;
 
@@ -216,6 +382,14 @@ export async function* openaiStream(
         }
         yield { type: 'tool_call', id: pc.id, name: pc.name, args };
       }
+    }
+  }
+
+  if (!sawSse && rawLines.length > 0) {
+    const { text, toolCalls } = parseOpenAICompletion(rawLines.join('\n'));
+    if (text) yield { type: 'text', text };
+    for (const call of toolCalls) {
+      yield { type: 'tool_call', id: call.id, name: call.name, args: call.args };
     }
   }
 }
@@ -323,9 +497,9 @@ export async function* ollamaStream(
   systemPrompt: string,
   messages: ProviderMsg[],
   tools: ToolSchema[],
-  baseUrl: string = DEFAULT_OLLAMA_BASE_URL,
+  options: StreamOptions = {},
 ): HttpChunkStream {
-  const url = new URL(baseUrl.trim() || DEFAULT_OLLAMA_BASE_URL);
+  const url = new URL((options.baseUrl ?? '').trim() || DEFAULT_OLLAMA_BASE_URL);
   // Tolerate a pasted OpenAI-style URL such as http://localhost:11434/v1.
   const rootPath = url.pathname.replace(/\/+$/, '').replace(/\/v1$/, '');
 

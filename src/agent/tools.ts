@@ -12,12 +12,22 @@ export const CUSTOM_TOOL_SCHEMAS: ToolSchema[] = [
   {
     name: 'get_live_state',
     description:
-      'Returns a full snapshot of the current session: tempo, tracks, session clips (grid), ' +
+      'Returns a snapshot of the current session: tempo, tracks, session clips (grid), ' +
       'arrangement clips (timeline), devices, and mixer ids. ' +
+      'Devices are listed by id and name with a parameter count; pass detail "full" only when ' +
+      'the parameter values themselves are needed. ' +
       'Call before claiming work is done to verify session clips exist and devices can produce sound.',
     parameters: {
       type: 'object',
-      properties: {},
+      properties: {
+        detail: {
+          type: 'string',
+          enum: ['summary', 'full'],
+          description:
+            'Omit or pass "summary" for ids, names and mixer values. Pass "full" to include every ' +
+            'device parameter and clip note — large, so ask for it only when required.',
+        },
+      },
     },
   },
   {

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { exec } from 'node:child_process';
+import { openExternalUrl } from './open-external.js';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Song } from '@ableton-extensions/sdk';
 import type { Storage, SessionMeta } from './storage.js';
@@ -18,10 +18,12 @@ import {
   STOPPED_BY_USER_MESSAGE,
 } from './agent/constants.js';
 import { executeToolWithRecovery } from './agent/tool-execution.js';
+import { truncateToolResult } from './agent/tool-result.js';
 import { GENERATED_TOOL_SCHEMAS } from './agent/generated-tools.js';
 import { CUSTOM_TOOL_SCHEMAS } from './agent/tools.js';
 import {
   createProvider,
+  modelStreams,
   providerRequiresKey,
   PROVIDERS,
   type ProviderMessage,
@@ -53,6 +55,23 @@ export interface LiveAgentServer {
   close(): void;
 }
 
+/** Resolves once the HTTP server listens on `port`, rejecting on listen errors. */
+function listenOn(server: http.Server, port: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const onError = (err: NodeJS.ErrnoException): void => {
+      server.off('listening', onListening);
+      reject(err);
+    };
+    const onListening = (): void => {
+      server.off('error', onError);
+      resolve();
+    };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port, '127.0.0.1');
+  });
+}
+
 export async function startServer(
   getSong: () => Song<'1.0.0'>,
   storage: Storage,
@@ -61,14 +80,23 @@ export async function startServer(
   const agentContext: AgentContext = { getSong, resources };
   /** Steps since last continue approval — persists across user messages in this Live session. */
   const agentBatchRef = { stepsInBatch: 0 };
-  // One UUID per extension lifetime (i.e. per Live-app session).
-  const sessionId = randomUUID();
-  const sessionMeta: SessionMeta = { id: sessionId, startedAt: new Date().toISOString() };
+  // Resume the most recent conversation instead of silently discarding it: the
+  // agent dialog is modal, so users close it constantly (and every dev rebuild
+  // restarts this host), and losing the chat each time is disruptive. A fresh
+  // session is only created when there is nothing to resume.
+  const previousSession = storage.listSessions()[0];
+  const sessionId = previousSession?.id ?? randomUUID();
+  const sessionMeta: SessionMeta = previousSession ?? {
+    id: sessionId,
+    startedAt: new Date().toISOString(),
+  };
   storage.saveSessionMeta(sessionId, sessionMeta);
 
-  const historyRef: { arr: ProviderMessage[] } = { arr: [] };
-  // Tracks the session ID used for saving history. Starts as the current session
-  // but switches when the user loads a previous one from the history panel.
+  const historyRef: { arr: ProviderMessage[] } = {
+    arr: previousSession ? storage.loadSessionHistory(sessionId) : [],
+  };
+  // Tracks the session ID used for saving history. Starts as the resumed session
+  // but switches when the user loads another one from the history panel.
   const activeSessionRef = { id: sessionId };
   let confirmMode: ConfirmMode = 'guard';
 
@@ -105,6 +133,9 @@ export async function startServer(
     }
   });
 
+  // Assigned once the listener is up; used by the pop-out button.
+  let serverUrl = '';
+
   const wss = new WebSocketServer({ server: httpServer });
 
   wss.on('connection', (ws) => {
@@ -129,6 +160,7 @@ export async function startServer(
           },
           activeSessionRef,
           agentBatchRef,
+          serverUrl,
         ).catch((err) => {
           ws.send(JSON.stringify({ type: 'error', message: String(err) }));
         });
@@ -140,10 +172,20 @@ export async function startServer(
     ws.on('close', () => console.log('[Live Agent] UI disconnected'));
   });
 
-  await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+  // A stable port keeps a popped-out browser tab working across host restarts;
+  // fall back to a free port when it is taken so startup never fails.
+  const preferredPort = Number.parseInt(process.env.LIVE_AGENT_PORT ?? '', 10) || 47100;
+  try {
+    await listenOn(httpServer, preferredPort);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw err;
+    console.log(`[Live Agent] Port ${preferredPort} is in use — using a free port instead`);
+    await listenOn(httpServer, 0);
+  }
   const address = httpServer.address() as { port: number };
+  serverUrl = `http://127.0.0.1:${address.port}/`;
 
-  console.log(`[Live Agent] Server listening on http://127.0.0.1:${address.port}`);
+  console.log(`[Live Agent] Server listening on ${serverUrl}`);
 
   return {
     port: address.port,
@@ -161,6 +203,7 @@ type WebViewMessage =
   | { type: 'set_active_choice'; provider: string; model: string }
   | { type: 'clear_key'; provider: string }
   | { type: 'open_url'; url: string }
+  | { type: 'open_in_browser' }
   | { type: 'console_log'; level: string; message: string }
   | { type: 'debug'; provider: string; model: string }
   | { type: 'confirm_response'; confirmed: boolean; toolCallId: string }
@@ -192,15 +235,15 @@ function sendVisibleHistory(ws: WebSocket, history: ProviderMessage[]): void {
 /**
  * Sends the initial project, history, stale-warning, and context frames.
  *
- * Always starts with an empty conversation — the user resumes a specific session
- * explicitly via the history panel rather than through any automatic detection.
+ * Keeps the live conversation: reopening the panel (routine, because the agent
+ * dialog is modal and blocks the transport) must not wipe the chat. The session
+ * is resumed from disk on startup, so a restarted host shows it too.
  */
 function handleConnection(
   ws: WebSocket,
   storage: Storage,
   historyRef: { arr: ProviderMessage[] },
 ): void {
-  historyRef.arr = [];
   sendVisibleHistory(ws, historyRef.arr);
   ws.send(JSON.stringify({ type: 'context', ...storage.loadPromptContext() }));
 }
@@ -215,6 +258,7 @@ async function handleMessage(
   setConfirmMode: (val: ConfirmMode) => void,
   activeSessionRef: { id: string },
   agentBatchRef: { stepsInBatch: number },
+  serverUrl: string,
 ): Promise<void> {
   switch (msg.type) {
     case 'chat':
@@ -336,15 +380,19 @@ async function handleMessage(
       break;
 
     case 'open_url': {
-      const url = msg.url;
-      if (url.startsWith('https://')) {
-        const cmd = process.platform === 'win32' ? `start "" "${url}"` : `open "${url}"`;
-        exec(cmd, (err) => {
-          if (err) console.error('[Live Agent] Failed to open URL:', err);
-        });
+      if (msg.url.startsWith('https://')) {
+        openExternalUrl(msg.url);
       }
       break;
     }
+
+    case 'open_in_browser':
+      // The SDK only offers a modal dialog, which blocks Live's transport; a
+      // normal browser window lets the user keep working in Live.
+      if (serverUrl) {
+        openExternalUrl(serverUrl);
+      }
+      break;
 
     case 'console_log':
       dbg(`[WebView:${msg.level}] ${msg.message}`);
@@ -384,7 +432,8 @@ async function handleChat(
 
   try {
     const provider = createProvider(providerId, apiKey, {
-      baseUrl: storage.getOllamaBaseUrl(),
+      // Only Ollama takes a user-configured URL; other providers keep their own endpoint.
+      baseUrl: providerId === 'ollama' ? storage.getOllamaBaseUrl() : undefined,
     });
     const song = agentContext.getSong();
 
@@ -415,11 +464,17 @@ async function handleChat(
         `[Live Agent] round ${totalRounds} (batch ${agentBatchRef.stepsInBatch}) — provider=${providerId} model=${model}`,
       );
       const providerMessages = pruneHistoryForProvider(history);
+      dbg(
+        `[Live Agent] round ${totalRounds} prompt ≈ ${Math.round(
+          (systemPrompt.length + JSON.stringify(providerMessages).length) / 4,
+        )} tokens across ${providerMessages.length} messages`,
+      );
       for await (const chunk of provider.chat({
         model,
         systemPrompt,
         messages: providerMessages,
         tools: ALL_TOOL_SCHEMAS,
+        stream: modelStreams(providerId, model),
       })) {
         if (chunk.type === 'text') {
           assistantContent += chunk.text;
@@ -465,6 +520,16 @@ async function handleChat(
           const safeResult = toJsonSafe(result);
           ws.send(stringifyJson({ type: 'tool_result', name: chunk.name, result: safeResult }));
 
+          // Log the size and cap what the model sees: one unbounded getter can
+          // outweigh the entire conversation and trip the provider's token budget.
+          const toolContent = stringifyJson(safeResult);
+          const cappedContent = truncateToolResult(toolContent);
+          dbg(
+            `[Live Agent] tool ${chunk.name} → ${toolContent.length} chars (~${Math.round(
+              toolContent.length / 4,
+            )} tokens)${cappedContent === toolContent ? '' : ' — truncated for the model'}`,
+          );
+
           history.push({
             role: 'assistant',
             content: assistantContent,
@@ -474,7 +539,7 @@ async function handleChat(
             role: 'tool',
             toolCallId: chunk.id,
             toolName: chunk.name,
-            content: stringifyJson(safeResult),
+            content: cappedContent,
           });
 
           assistantContent = '';
@@ -620,7 +685,8 @@ structure and style. Return only the bullet points, no preamble.`;
 
   try {
     const provider = createProvider(providerId, apiKey, {
-      baseUrl: storage.getOllamaBaseUrl(),
+      // Only Ollama takes a user-configured URL; other providers keep their own endpoint.
+      baseUrl: providerId === 'ollama' ? storage.getOllamaBaseUrl() : undefined,
     });
     let fullText = '';
 
@@ -629,6 +695,7 @@ structure and style. Return only the bullet points, no preamble.`;
       systemPrompt,
       messages: [{ role: 'user', content: userContent }],
       tools: [],
+      stream: modelStreams(providerId, model),
     })) {
       if (chunk.type === 'text') {
         fullText += chunk.text;
@@ -690,7 +757,9 @@ async function handleDebug(
   const apiKey = storage.getApiKey(providerId);
   emit(`API key set: ${!!apiKey}  provider=${providerId}  model=${model}`);
   try {
-    createProvider(providerId, apiKey ?? 'test', { baseUrl: storage.getOllamaBaseUrl() });
+    createProvider(providerId, apiKey ?? 'test', {
+      baseUrl: providerId === 'ollama' ? storage.getOllamaBaseUrl() : undefined,
+    });
     emit(`createProvider: OK`);
   } catch (e) {
     emit(`createProvider: FAIL – ${e}`);

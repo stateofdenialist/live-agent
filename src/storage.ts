@@ -33,6 +33,7 @@ interface Settings {
     openai?: string;
     anthropic?: string;
     gemini?: string;
+    freebuff?: string;
     ollama?: string;
   };
   /** Base URL of a local Ollama server; unset means the localhost default. */
@@ -257,6 +258,7 @@ export class Storage {
       openai: this.data.apiKeys.openai ? '••••••••' : '',
       anthropic: this.data.apiKeys.anthropic ? '••••••••' : '',
       gemini: this.data.apiKeys.gemini ? '••••••••' : '',
+      freebuff: this.data.apiKeys.freebuff ? '••••••••' : '',
     };
   }
 

@@ -20,6 +20,7 @@ const KEY_PLACEHOLDERS: Record<string, string> = {
   openai: 'sk-…',
   anthropic: 'sk-ant-…',
   gemini: 'AIza…',
+  freebuff: 'Developer API key',
 };
 
 const TEXTAREA_CLASS =
@@ -139,7 +140,16 @@ export function SettingsPanel({
           >
             Google AI Studio
           </a>
-          . Local models need no key — point the Ollama server field at your endpoint.
+          . Freebuff API keys come from{' '}
+          <a
+            href="https://freebuff.com/account/api"
+            className="text-accent no-underline hover:underline"
+            onClick={(e) => handleExternalLink(e, 'https://freebuff.com/account/api')}
+          >
+            freebuff.com/account/api
+          </a>{' '}
+          (a Developer API key — session tokens cannot drive an external client). Local models need
+          no key — point the Ollama server field at your endpoint.
         </p>
         {providerIds.map((id) => {
           const entry = providers[id];

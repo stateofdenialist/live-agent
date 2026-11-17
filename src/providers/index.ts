@@ -7,6 +7,7 @@ import {
   type ProviderMsg,
   type ToolSchema as HttpToolSchema,
   type HttpChunk,
+  type StreamOptions,
 } from './http-stream.js';
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
@@ -46,6 +47,8 @@ export interface ChatOptions {
   systemPrompt: string;
   messages: ProviderMsg[];
   tools: ToolSchema[];
+  /** False asks for one JSON reply; set it for models that cannot stream. */
+  stream?: boolean;
 }
 
 export interface ProviderAdapter {
@@ -88,6 +91,28 @@ export const PROVIDERS = {
     ],
     default: 'gemini-3.1-flash-lite',
   },
+  freebuff: {
+    label: 'Freebuff API',
+    requiresKey: true,
+    /**
+     * OpenAI-compatible. `GET /api/v1/paid/models` is public and lists each
+     * model's tool/streaming support; entries below are the tool-capable ones.
+     */
+    baseUrl: 'https://freebuff.com/api/v1/paid',
+    models: [
+      // The only model in the catalog that both streams and calls tools.
+      { id: 'deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash (streaming)' },
+      { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5', streaming: false },
+      { id: 'gpt-6-luna', label: 'GPT-6 Luna', streaming: false },
+      { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', streaming: false },
+      { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', streaming: false },
+      { id: 'gemini-4-argon', label: 'Gemini 4 Argon', streaming: false },
+      { id: 'qwen3.8-max', label: 'Qwen3.8 Max', streaming: false },
+      { id: 'minimax-m3', label: 'MiniMax M3', streaming: false },
+      { id: 'claude-fable-5-1', label: 'Claude Fable 5.1', streaming: false },
+    ],
+    default: 'deepseek-v4.1-flash',
+  },
   ollama: {
     label: 'Ollama (local)',
     requiresKey: false,
@@ -122,27 +147,25 @@ type StreamFn = (
   systemPrompt: string,
   messages: ProviderMsg[],
   tools: HttpToolSchema[],
-  baseUrl?: string,
+  options?: StreamOptions,
 ) => AsyncGenerator<HttpChunk>;
 
 /** Adapts the http-stream generators to the ProviderAdapter interface. */
 function makeAdapter(fn: StreamFn) {
   return (apiKey: string, baseUrl?: string): ProviderAdapter => ({
-    chat({ model, systemPrompt, messages, tools }): AsyncIterable<StreamChunk> {
-      return fn(
-        apiKey,
-        model,
-        systemPrompt,
-        messages,
-        tools as HttpToolSchema[],
+    chat({ model, systemPrompt, messages, tools, stream }): AsyncIterable<StreamChunk> {
+      return fn(apiKey, model, systemPrompt, messages, tools as HttpToolSchema[], {
         baseUrl,
-      ) as AsyncIterable<StreamChunk>;
+        stream,
+      }) as AsyncIterable<StreamChunk>;
     },
   });
 }
 
 const adapters = {
   openai: makeAdapter(openaiStream),
+  // Freebuff's API is OpenAI-compatible; only the base URL differs.
+  freebuff: makeAdapter(openaiStream),
   anthropic: makeAdapter(anthropicStream),
   gemini: makeAdapter(geminiStream),
   ollama: makeAdapter(ollamaStream),
@@ -155,5 +178,22 @@ export function createProvider(
 ): ProviderAdapter {
   const factory = adapters[providerId as keyof typeof adapters];
   if (!factory) throw new Error(`Unknown provider: ${providerId}`);
-  return factory(apiKey, options.baseUrl);
+  return factory(apiKey, options.baseUrl ?? providerBaseUrl(providerId));
+}
+
+/** Fixed API base URL of a provider that talks to a single endpoint (e.g. Freebuff). */
+export function providerBaseUrl(providerId: string): string | undefined {
+  const entry = PROVIDERS[providerId as ProviderId] as unknown as { baseUrl?: string } | undefined;
+  return entry?.baseUrl;
+}
+
+/**
+ * Whether a model streams. Registry entries marked `streaming: false` get one
+ * JSON reply instead, which the OpenAI-compatible client replays as a stream.
+ */
+export function modelStreams(providerId: string, model: string): boolean {
+  const entry: { models?: readonly { id: string; streaming?: boolean }[] } | undefined =
+    PROVIDERS[providerId as ProviderId];
+  const match = entry?.models?.find((item) => item.id === model);
+  return match?.streaming !== false;
 }
