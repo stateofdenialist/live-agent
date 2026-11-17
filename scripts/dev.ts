@@ -9,7 +9,9 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import { createWedgeDetector } from '../src/scripts/host-health.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WATCH_DIRS = ['src', 'ui/src', 'scripts'];
@@ -17,9 +19,74 @@ const DEBOUNCE_MS = 400;
 const HOST_COMMAND = 'extensions-cli';
 const HOST_PID_FILE = path.join(PROJECT_ROOT, '.live-agent-host.pid');
 const isWindows = process.platform === 'win32';
+/** Restarts we will attempt on our own before asking the user to fix Live. */
+const MAX_AUTO_RECOVERIES = 2;
+/** A host that stays up this long clears the auto-recovery counter. */
+const HEALTHY_HOST_MS = 60_000;
+/** How long to stop trying after concluding that Live itself is wedged. */
+const GIVE_UP_MS = 60_000;
 
 let host: ChildProcess | null = null;
 let debounce: NodeJS.Timeout | null = null;
+let hostStartedAt = 0;
+let autoRecoveries = 0;
+let recoveryPausedUntil = 0;
+
+/**
+ * Forwards a child stream to ours while scanning it line by line.
+ *
+ * Output is piped rather than inherited so the runner can see Live's bridge
+ * failures; without a line buffer a message split across chunks would be missed.
+ */
+function pipeLines(
+  stream: NodeJS.ReadableStream | null,
+  sink: Writable,
+  onLine: (line: string) => void,
+): void {
+  let buffer = '';
+  stream?.on('data', (chunk: Buffer) => {
+    sink.write(chunk);
+    buffer += chunk.toString();
+    const lines = buffer.split('\n');
+    buffer = (lines.pop() ?? '').slice(-2048);
+    for (const line of lines) onLine(line);
+  });
+}
+
+/**
+ * Live stopped processing our messages: the host is alive but Live has dropped
+ * the extension, so restart the host. If a fresh host wedges too, only Live can
+ * recover and we say so once instead of thrashing.
+ */
+function handleWedge(): void {
+  const now = Date.now();
+  if (now < recoveryPausedUntil) return;
+
+  // A long-lived host means the bridge recovered on its own; count from zero.
+  if (now - hostStartedAt > HEALTHY_HOST_MS) autoRecoveries = 0;
+
+  if (autoRecoveries >= MAX_AUTO_RECOVERIES) {
+    recoveryPausedUntil = now + GIVE_UP_MS;
+    console.error(
+      [
+        '',
+        '[dev] Live is not accepting the extension host — its message bridge keeps failing.',
+        '[dev] Restarting the host will not help. In Live: Preferences -> Extensions, switch',
+        '[dev] Developer Mode off and back on, then save any file to respawn the host.',
+        `[dev] Auto-recovery paused for ${GIVE_UP_MS / 1000}s.`,
+      ].join('\n'),
+    );
+    return;
+  }
+
+  autoRecoveries += 1;
+  console.log(
+    `\n[dev] Live stopped processing host messages — restarting the extension host ` +
+      `(attempt ${autoRecoveries}/${MAX_AUTO_RECOVERIES})`,
+  );
+  stopHost();
+  startHost();
+}
 
 /** Kills a process together with any children it spawned. */
 function killTree(pid: number): void {
@@ -104,14 +171,24 @@ function build(): boolean {
 function startHost(): void {
   const child = spawn('npx extensions-cli run', {
     cwd: PROJECT_ROOT,
-    stdio: 'inherit',
+    stdio: ['inherit', 'pipe', 'pipe'],
     shell: true,
     // Without a group of its own, killTree() could only reach the shell wrapper.
     detached: !isWindows,
   });
   host = child;
+  hostStartedAt = Date.now();
   recordHostPid(child);
   console.log(`[dev] extension host started (pid ${child.pid ?? '?'})`);
+
+  // The host cannot report Live's own bridge failures; only its output shows them.
+  const detector = createWedgeDetector();
+  const scan = (line: string): void => {
+    if (host !== child) return;
+    if (detector.push(line)) handleWedge();
+  };
+  pipeLines(child.stdout, process.stdout, scan);
+  pipeLines(child.stderr, process.stderr, scan);
 
   child.on('exit', (code) => {
     // A host we replaced is no longer `host`; only report genuine exits.
