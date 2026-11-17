@@ -174,7 +174,7 @@ Cloud conversation sync · collaborative sessions for remote co-production.
 **Ideas (not yet scheduled)**  
 Max for Live patch generation, M4L bridge, cloud plugin parameter database, voice-first / hum-to-MIDI mobile interface.
 
-See [`CHANGELOG.md`](./CHANGELOG.md) for what has already shipped.
+See [`CHANGELOG.md`](./CHANGELOG.md) for what has already shipped. Fork-specific follow-ups (local-model speed, agent reliability, packaging) are tracked in [`docs/fork-roadmap.md`](./docs/fork-roadmap.md).
 
 ---
 
