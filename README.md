@@ -32,14 +32,19 @@ Live Agent opens a chat panel inside Live via the [Ableton Extensions SDK](https
 
 **Supported providers:**
 
-| Provider       | Models                                                                                |
-| -------------- | ------------------------------------------------------------------------------------- |
-| OpenAI         | GPT-5.5, GPT-5.5 Pro, GPT-5.4, GPT-5.4 mini, o3, o3 Pro                               |
-| Anthropic      | Claude Opus 4.8, Claude Sonnet 4.6, Claude Haiku 4.5                                  |
-| Google         | Gemini 3.5 Flash, Gemini 3.1 Pro (preview), Gemini 3.1 Flash-Lite                     |
-| Ollama (local) | gpt-oss:20b, gemma4:12b, gemma4:26b, llama3.1:8b — no API key; server URL in Settings |
+| Provider       | Models                                                                                                   |
+| -------------- | -------------------------------------------------------------------------------------------------------- |
+| OpenAI         | GPT-5.5, GPT-5.5 Pro, GPT-5.4, GPT-5.4 mini, o3, o3 Pro                                                  |
+| Anthropic      | Claude Opus 4.8, Claude Sonnet 4.6, Claude Haiku 4.5                                                     |
+| Google         | Gemini 3.5 Flash, Gemini 3.1 Pro (preview), Gemini 3.1 Flash-Lite                                        |
+| Freebuff API   | `deepseek-v4.1-flash` (streaming) plus eight tool-capable models via the Developer API — key in Settings |
+| Ollama (local) | gpt-oss:20b, gemma4:12b, gemma4:26b, llama3.1:8b — no API key; server URL in Settings                    |
 
-API keys are stored locally in Live's extension storage and never leave your machine. Local models run with a 32k context and a 30-minute keep-alive — set `LIVE_AGENT_NUM_CTX` to override the context size. The `npm start` model picker is a developer-mode feature; in a packaged `.ablx` install, pick the provider and model in the panel's bottom bar and the choice is remembered.
+API keys are stored locally in Live's extension storage and never leave your machine. Local models run with a 32k context and a 30-minute keep-alive — set `LIVE_AGENT_NUM_CTX` to override the context size. The **Freebuff API** provider talks to `freebuff.com/api/v1/paid` with a Developer API key from [freebuff.com/account/api](https://freebuff.com/account/api) (a session token cannot drive an external client); catalog models that cannot stream are requested as one JSON reply and replayed, so they behave like the streaming ones. The `npm start` model picker is a developer-mode feature; in a packaged `.ablx` install, pick the provider and model in the panel's bottom bar and the choice is remembered.
+
+**The panel can live in your browser.** The Extensions SDK only exposes a _modal_ dialog, so while the panel is open Live's transport and other controls are blocked. The **external-link button** in the bottom bar opens the same UI in your default browser, where you can play the track, tweak devices and browse while the agent works. The host listens on a fixed port (`LIVE_AGENT_PORT`, default `47100`) so a popped-out tab survives restarts.
+
+**Conversations persist, and prompts stay lean.** Closing the panel or restarting Live resumes the most recent saved conversation instead of starting empty. Token use is bounded on three sides: `get_live_state` returns a compact snapshot (`detail: "full"` returns every device parameter and note), oversized tool results are capped before they reach the model, and provider history is trimmed to a character budget by stubbing older tool results. That keeps multi-round turns inside providers' per-minute token limits.
 
 ---
 
@@ -87,6 +92,7 @@ npm run build
 - Right-click any track → **Live Agent**
 - Click the **gear icon** in the bottom bar → paste your API key
 - Click the **chat icon** to return and start talking
+- Optionally click the **external-link icon** to move the panel into your browser, leaving Live fully usable
 
 ### 5. Optional — run a local model with Ollama
 
@@ -136,6 +142,8 @@ src/
 ├── startup-choice.ts       # Applies the one-shot model choice written by `npm start`
 ├── server.ts               # Local HTTP + WebSocket server, agentic loop, confirmation flow
 ├── storage.ts              # Persistent key + settings storage
+├── history-prune.ts        # Provider history trimming — count limit + character budget
+├── open-external.ts        # Opens a URL in the default browser (pop-out button)
 ├── providers/
 │   ├── index.ts            # ProviderAdapter interface, provider/model registry, factory
 │   └── http-stream.ts      # Streaming over node:https — OpenAI, Anthropic, Gemini, native Ollama
@@ -143,9 +151,11 @@ src/
 │   ├── chat.ts             # System prompt builder + LiveState types
 │   ├── safety.ts           # DESTRUCTIVE_TOOLS set for confirmation mode
 │   ├── tools.ts            # Custom tool schema (get_live_state)
+│   ├── tool-result.ts      # Caps oversized tool results before they reach the model
 │   └── generated-tools.ts  # Auto-generated — do not edit
 └── live/
     ├── executor.ts         # getLiveState + custom tool handler
+    ├── compact-state.ts    # Compact session snapshot returned by get_live_state
     ├── handle-registry.ts  # Float64 → BigInt precision recovery
     └── generated-executor.ts  # Auto-generated — do not edit
 

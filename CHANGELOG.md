@@ -11,6 +11,10 @@ Versioning follows [Semantic Versioning](https://semver.org).
 
 ### Fixed
 
+- **Conversation survives reopening the panel** — connecting used to wipe the live history, so closing the modal dialog (the only way to reach Live's transport) discarded the chat; the most recent session is also resumed from disk when the extension host restarts
+- **Silent provider hangs** — a request that opens and then sends nothing now fails after 90s (`LIVE_AGENT_IDLE_TIMEOUT_MS` to override) instead of hanging the turn forever
+- **Leaked response sockets** — the connection closes when a turn stops reading at `[DONE]`, so a gateway cannot keep counting a finished request as active
+- **Rate-limit handling** — 429 bodies are reported instead of replaced with a canned message; throttles retry up to 3 times with the server's own delay, while an unfunded account fails immediately
 - **Startup model picker** — the written choice is also looked up in the working directory, so it applies when the host is started from outside the repo root; a packaged `.ablx` install picks its provider in the panel instead
 - **Auto mode** — skips multi-step continue checkpoints (Review/Guard still pause every 5 steps)
 - **Continue checkpoint UI** — accept removes the prompt entirely; decline keeps the message with a stop icon (no duplicate streamed text)
@@ -18,6 +22,7 @@ Versioning follows [Semantic Versioning](https://semver.org).
 
 ### Added
 
+- **Freebuff API provider** — `freebuff.com/api/v1/paid` (OpenAI-compatible) alongside the existing providers: `deepseek-v4.1-flash` streams with tool calls, and the eight other tool-capable catalog models are requested as a single JSON reply and replayed as a stream; Developer API key in Settings
 - **Local Ollama provider** — `gpt-oss:20b` via Ollama's native `/api/chat` API (the OpenAI-compatible endpoint ignores `num_ctx`, which truncated the tool schemas), no API key required; server URL configurable in Settings (defaults to `http://localhost:11434`)
 - **Startup model picker** — `npm start` lists the models Ollama has pulled and applies the pick on activation (override with `LIVE_AGENT_MODEL`); the file is consumed once, so later launches keep the choice made in the panel
 - **`web_search` tool** — Wikipedia + DuckDuckGo lookup for tempo, bass lines, and other musical reference (no API key)
@@ -26,6 +31,10 @@ Versioning follows [Semantic Versioning](https://semver.org).
 
 ### Changed
 
+- **`get_live_state` is compact by default** — devices are listed by id and name with a parameter count and clips report a note count, instead of every device parameter and note (a real 8-track session serialised to 361 KB, ~90k tokens, and tripped provider token limits on the next round); `detail: "full"` returns the complete snapshot
+- **Tool results are capped** at 24,000 characters before they reach the model so one greedy getter cannot outweigh the conversation (the panel still shows the full result)
+
+- **OpenAI-compatible transport** — the request endpoint is derived from a base URL (`https://api.openai.com/v1` by default) instead of a hardcoded host, and non-SSE replies are parsed instead of discarded; Ollama's base URL is no longer handed to providers that do not use it
 - **Tool descriptions** — the generator no longer emits empty descriptions (`??` kept blank JSDoc); it now uses SDK JSDoc, then `@param` docs, then a humanised parameter name, with overrides for tools whose JSDoc described the result rather than the action
 - **Dev runner** — `npm start` now watches `src/`, `ui/src/` and `scripts/`, rebuilding and restarting the Extension Host on save; a host left by an interrupted run is stopped through its pid file, replacing the `pkill` `prestart` that only worked on macOS/Linux and never touching another project's host
 - **Tool error recovery** — SDK tool failures return `{ ok: false, error }` to the LLM instead of aborting the agent loop, so the agent can refresh state and retry (e.g. stale track ids after a partial delete)
