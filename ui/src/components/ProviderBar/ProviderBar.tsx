@@ -1,4 +1,4 @@
-import { Activity, Bug, Code2, MessageSquare, Settings, Trash2 } from 'lucide-react';
+import { Activity, Bug, Code2, ExternalLink, MessageSquare, Settings, Trash2 } from 'lucide-react';
 import { getPanelToggleMeta, type AppTab } from '../../appTab.js';
 import type { ConfirmMode, ProvidersRegistry } from '../../types';
 
@@ -25,6 +25,7 @@ interface ProviderBarProps {
   onSetConfirmMode: (mode: ConfirmMode) => void;
   onDiagnose: () => void;
   onClear: () => void;
+  onPopOut: () => void;
   onToggleTab: () => void;
 }
 
@@ -43,6 +44,7 @@ export function ProviderBar({
   onSetConfirmMode,
   onDiagnose,
   onClear,
+  onPopOut,
   onToggleTab,
 }: ProviderBarProps) {
   const panelToggle = getPanelToggleMeta(tab);
@@ -111,6 +113,13 @@ export function ProviderBar({
               title="Run environment diagnostics"
             >
               <Activity size={15} />
+            </button>
+            <button
+              className={`${ICON_BTN} text-text-dim`}
+              onClick={onPopOut}
+              title="Open in your browser — Live stays usable"
+            >
+              <ExternalLink size={15} />
             </button>
             <button
               className={`${ICON_BTN} text-text-dim`}

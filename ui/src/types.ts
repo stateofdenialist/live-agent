@@ -125,6 +125,7 @@ export type ClientMessage =
   | { type: 'set_active_choice'; provider: string; model: string }
   | { type: 'clear_key'; provider: string }
   | { type: 'open_url'; url: string }
+  | { type: 'open_in_browser' }
   | { type: 'console_log'; level: string; message: string }
   | { type: 'debug'; provider: string; model: string }
   | { type: 'set_confirm_mode'; mode: ConfirmMode }

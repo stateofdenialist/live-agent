@@ -307,6 +307,7 @@ export function App() {
         onSetConfirmMode={handleSetConfirmMode}
         onDiagnose={handleDiagnose}
         onClear={handleClear}
+        onPopOut={() => sendMsg({ type: 'open_in_browser' })}
         onToggleTab={handleToggleTab}
       />
     </div>
